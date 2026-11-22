@@ -2,9 +2,14 @@ package com.example.data.database
 
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.ChapterEntity
+import com.example.data.entity.ExtractionStatus
 import com.example.data.entity.LawCategoryCrossRef
 import com.example.data.entity.LawEntity
 import com.example.data.entity.SectionEntity
+import com.example.data.entity.SubsectionEntity
+import com.example.data.entity.VerificationStatus
+import com.example.data.importer.LegalTextParser
+import com.example.utils.HashUtils
 
 object LawPreloader {
 
@@ -296,12 +301,26 @@ object LawPreloader {
             ChapterEntity(29, 7, "অধ্যায় ২", "Chapter II", "চুক্তির সুনির্দিষ্ট সম্পাদন", "Of the Specific Performance of Contracts", 2),
             ChapterEntity(30, 7, "অধ্যায় ৫", "Chapter V", "দলিল বাতিল", "Of the Cancellation of Instruments", 3),
             ChapterEntity(31, 7, "অধ্যায় ৬", "Chapter VI", "ঘোষণামূলক ডিক্রি", "Of Declaratory Decrees", 4),
-            ChapterEntity(32, 7, "অধ্যায় ১০", "Chapter X", "চিরতরে ও অস্থায়ী নিষেধাজ্ঞা", "Of Injunctions Generally", 5)
+            ChapterEntity(32, 7, "অধ্যায় ১০", "Chapter X", "চিরতরে ও অস্থায়ী নিষেধাজ্ঞা", "Of Injunctions Generally", 5),
+
+            // Women & Children Repression Act Chapters
+            ChapterEntity(33, 6, "মূল বিধান", "Main Provisions", "অপরাধ ও শাস্তির বিধান", "Offences and Penalties", 1),
+            // Narcotics Control Act Chapters
+            ChapterEntity(34, 8, "অধ্যায় ৬", "Chapter VI", "অপরাধ ও দণ্ড সারণি", "Offences and Penalties", 1),
+            // Anti-Corruption Commission Act Chapters
+            ChapterEntity(35, 9, "মূল বিধান", "Main Provisions", "কমিশন ও দুর্নীতি সংক্রান্ত বিধান", "Commission & Offences", 1),
+            // Limitation Act Chapters
+            ChapterEntity(36, 10, "অধ্যায় ২", "Chapter II", "মোকদ্দমা, আপিল ও দরখাস্তের তামাদি", "Limitation of Suits, Appeals and Applications", 1),
+            // Muslim Family Laws Ordinance Chapters
+            ChapterEntity(37, 11, "মূল ধারা", "Main Sections", "বিবাহ, বহুবিবাহ ও তালাক বিধান", "Marriage, Polygamy & Talaq", 1),
+            // Road Transport Act Chapters
+            ChapterEntity(38, 12, "মূল বিধান", "Main Provisions", "সড়ক নিরাপত্তা ও দণ্ডবিধান", "Road Safety & Penalties", 1)
         )
     }
 
     fun getInitialSections(): List<SectionEntity> {
-        return listOf(
+        val lawSourceMap = getInitialLaws().associate { it.id to it.sourceUrl }
+        val rawSections = listOf(
             // ============================================
             // 1. CONSTITUTION (গণপ্রজাতন্ত্রী বাংলাদেশের সংবিধান)
             // ============================================
@@ -1042,7 +1061,7 @@ object LawPreloader {
             SectionEntity(
                 id = 601,
                 lawId = 6,
-                chapterId = 6,
+                chapterId = 33,
                 sectionNumberBn = "৯",
                 sectionNumberEn = "9",
                 titleBn = "ধর্ষণ ও ধর্ষণজনিত কারণে মৃত্যুর শাস্তি",
@@ -1062,7 +1081,7 @@ object LawPreloader {
             SectionEntity(
                 id = 602,
                 lawId = 6,
-                chapterId = 6,
+                chapterId = 33,
                 sectionNumberBn = "১১",
                 sectionNumberEn = "11",
                 titleBn = "যৌতুকের জন্য মারপিট ও মৃত্যুর শাস্তি",
@@ -1083,7 +1102,7 @@ object LawPreloader {
             SectionEntity(
                 id = 603,
                 lawId = 6,
-                chapterId = 6,
+                chapterId = 33,
                 sectionNumberBn = "১৭",
                 sectionNumberEn = "17",
                 titleBn = "মিথ্যা মামলা বা অভিযোগ দায়েরের শাস্তি",
@@ -1105,7 +1124,7 @@ object LawPreloader {
             SectionEntity(
                 id = 1101,
                 lawId = 11,
-                chapterId = 11,
+                chapterId = 37,
                 sectionNumberBn = "৬",
                 sectionNumberEn = "6",
                 titleBn = "বহুবিবাহ (Polygamy) ও সালিসি পরিষদের পূর্বানুমোদন",
@@ -1125,7 +1144,7 @@ object LawPreloader {
             SectionEntity(
                 id = 1102,
                 lawId = 11,
-                chapterId = 11,
+                chapterId = 37,
                 sectionNumberBn = "৭",
                 sectionNumberEn = "7",
                 titleBn = "তালাকের কার্যকারিতা ও নোটিশ প্রদান",
@@ -1149,7 +1168,7 @@ object LawPreloader {
             SectionEntity(
                 id = 1001,
                 lawId = 10,
-                chapterId = 10,
+                chapterId = 36,
                 sectionNumberBn = "৩",
                 sectionNumberEn = "3",
                 titleBn = "তামাদি অতিবাহিত মোকদ্দমা খারিজ (Dismissal of suits instituted after period)",
@@ -1167,7 +1186,7 @@ object LawPreloader {
             SectionEntity(
                 id = 1002,
                 lawId = 10,
-                chapterId = 10,
+                chapterId = 36,
                 sectionNumberBn = "৫",
                 sectionNumberEn = "5",
                 titleBn = "কতিপয় ক্ষেত্রে নির্ধারিত মেয়াদের সম্প্রসারণ (বিলম্ব মার্জনা / Condonation of Delay)",
@@ -1189,7 +1208,7 @@ object LawPreloader {
             SectionEntity(
                 id = 801,
                 lawId = 8,
-                chapterId = 8,
+                chapterId = 34,
                 sectionNumberBn = "৩৬",
                 sectionNumberEn = "36",
                 titleBn = "মাদকদ্রব্য অপরাধের সারণি ও দণ্ড (ইয়াবা, হেরোইন, আইস ইত্যাদি)",
@@ -1208,5 +1227,42 @@ object LawPreloader {
                 orderIndex = 1
             )
         )
+
+        return rawSections.map { sec ->
+            sec.copy(
+                contentHash = HashUtils.sha256(sec.fullContentBn),
+                sourceUrl = lawSourceMap[sec.lawId] ?: "https://bdlaws.minlaw.gov.bd",
+                extractionStatus = ExtractionStatus.COMPLETE,
+                verificationStatus = VerificationStatus.UNVERIFIED,
+                isRepealed = LegalTextParser.isRepealedOrOmitted(sec.titleBn, sec.fullContentBn),
+                isAmended = LegalTextParser.isAmended(sec.titleBn, sec.fullContentBn)
+            )
+        }
+    }
+
+    fun extractSubsectionsForSections(sections: List<SectionEntity>): List<SubsectionEntity> {
+        val result = mutableListOf<SubsectionEntity>()
+        var syntheticId = 1L
+        for (sec in sections) {
+            val parsed = LegalTextParser.parseHierarchy(sec.fullContentBn)
+            val tempToRealId = mutableMapOf<Int, Long>()
+            for (node in parsed) {
+                val realId = syntheticId++
+                tempToRealId[node.tempId] = realId
+                val parentRealId = node.parentTempId?.let { tempToRealId[it] }
+                result.add(
+                    SubsectionEntity(
+                        id = realId,
+                        sectionId = sec.id,
+                        parentSubsectionId = parentRealId,
+                        subsectionNumber = node.subsectionNumber,
+                        nodeType = node.nodeType,
+                        subsectionText = node.subsectionText,
+                        sequenceOrder = node.sequenceOrder
+                    )
+                )
+            }
+        }
+        return result
     }
 }

@@ -27,6 +27,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
@@ -37,6 +39,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,8 +67,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.entity.ExtractionStatus
+import com.example.data.entity.FootnoteEntity
 import com.example.data.entity.LawEntity
+import com.example.data.entity.LawVerificationReportEntity
 import com.example.data.entity.SectionEntity
+import com.example.data.entity.SubsectionEntity
+import com.example.data.entity.SubsectionNodeType
+import com.example.data.entity.VerificationStatus
 import com.example.ui.theme.BadgeBailable
 import com.example.ui.theme.BadgeCognizable
 import com.example.ui.theme.BadgeNonBailable
@@ -131,8 +140,37 @@ fun LawCard(
     isFavorite: Boolean,
     onFavoriteToggle: () -> Unit,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    verificationReport: LawVerificationReportEntity? = null
 ) {
+    val completenessLabel: String
+    val completenessColor: Color
+    when {
+        law.extractionStatus == ExtractionStatus.NOT_EXTRACTED ||
+            (verificationReport != null && verificationReport.actualSectionsCount == 0) -> {
+            completenessLabel = "ধারা অনুপস্থিত"
+            completenessColor = Color(0xFFC62828)
+        }
+        law.extractionStatus == ExtractionStatus.COMPLETE &&
+            law.verificationStatus == VerificationStatus.VERIFIED -> {
+            completenessLabel = "সম্পূর্ণ যাচাইকৃত"
+            completenessColor = Color(0xFF2E7D32)
+        }
+        law.verificationStatus == VerificationStatus.OCR_UNVERIFIED -> {
+            completenessLabel = "OCR অযাচাইকৃত"
+            completenessColor = Color(0xFFEF6C00)
+        }
+        else -> {
+            val actual = verificationReport?.actualSectionsCount
+            completenessLabel = if (actual != null && law.totalSections > 0) {
+                "আংশিক (${BanglaNumberUtils.toBanglaDigits(actual)}/${BanglaNumberUtils.toBanglaDigits(law.totalSections)})"
+            } else {
+                "আংশিক সংগৃহীত"
+            }
+            completenessColor = Color(0xFFE65100)
+        }
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -150,7 +188,10 @@ fun LawCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.primaryContainer
@@ -160,7 +201,9 @@ fun LawCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -181,7 +224,7 @@ fun LawCard(
                 IconButton(
                     onClick = onFavoriteToggle,
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(48.dp)
                         .testTag("favorite_law_${law.id}")
                 ) {
                     Icon(
@@ -192,7 +235,7 @@ fun LawCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = law.titleBn,
@@ -228,16 +271,18 @@ fun LawCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
                     LegalBadge(
                         text = law.status,
                         color = BadgeOfficial
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "মোট ধারা: ${BanglaNumberUtils.toBanglaDigits(law.totalSections)}টি",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    LegalBadge(
+                        text = completenessLabel,
+                        color = completenessColor
                     )
                 }
 
@@ -276,9 +321,38 @@ fun LegalBadge(
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             color = color,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+fun buildCompleteSectionTextForExport(
+    section: SectionEntity,
+    subsections: List<SubsectionEntity>,
+    footnotes: List<FootnoteEntity>
+): String {
+    val sb = StringBuilder()
+    sb.append(section.fullContentBn)
+    if (subsections.isNotEmpty() && subsections.size > 1) {
+        sb.append("\n\n[উপধারা ও দফা বিশ্লেষণ]\n")
+        subsections.forEach { sub ->
+            val indent = if (sub.parentSubsectionId != null) "   " else ""
+            sb.append("$indent${sub.subsectionText}\n")
+        }
+    }
+    if (footnotes.isNotEmpty()) {
+        sb.append("\n[পাদটীকা / Footnotes]\n")
+        footnotes.forEach { fn ->
+            sb.append("[${fn.footnoteMarker}] ${fn.footnoteText}\n")
+        }
+    }
+    if (section.simplifiedExplanationBn.isNotEmpty()) {
+        sb.append("\n[সহজ সরল ব্যাখ্যা ও আইনের প্রায়োগিক দিক]\n")
+        sb.append(section.simplifiedExplanationBn)
+    }
+    return sb.toString().trim()
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -294,11 +368,15 @@ fun SectionCard(
     onFavoriteToggle: () -> Unit,
     onSaveExplanation: (String) -> Unit,
     onSavePersonalNote: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    subsections: List<SubsectionEntity> = emptyList(),
+    footnotes: List<FootnoteEntity> = emptyList(),
+    chapterTitle: String? = null
 ) {
     val context = LocalContext.current
     var showEditNoteDialog by remember { mutableStateOf(false) }
     var showEditExplanationDialog by remember { mutableStateOf(false) }
+    var expandSubsections by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier
@@ -311,13 +389,31 @@ fun SectionCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
+            if (!chapterTitle.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Text(
+                        text = chapterTitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
             // Header: Section Number Badge & Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.primary
@@ -341,7 +437,7 @@ fun SectionCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = onBookmarkToggle,
-                        modifier = Modifier.size(36.dp).testTag("bookmark_section_${section.id}")
+                        modifier = Modifier.size(48.dp).testTag("bookmark_section_${section.id}")
                     ) {
                         Icon(
                             imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
@@ -351,7 +447,7 @@ fun SectionCard(
                     }
                     IconButton(
                         onClick = onFavoriteToggle,
-                        modifier = Modifier.size(36.dp).testTag("fav_section_${section.id}")
+                        modifier = Modifier.size(48.dp).testTag("fav_section_${section.id}")
                     ) {
                         Icon(
                             imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
@@ -362,7 +458,7 @@ fun SectionCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Section Title
             Text(
@@ -374,7 +470,7 @@ fun SectionCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            if (section.titleEn.isNotEmpty()) {
+            if (section.titleEn.isNotEmpty() && section.titleEn != section.titleBn) {
                 Text(
                     text = section.titleEn,
                     style = MaterialTheme.typography.bodySmall,
@@ -382,13 +478,38 @@ fun SectionCard(
                 )
             }
 
-            // Legal Attribute Badges
-            if (section.bailableStatus.isNotEmpty() || section.cognizableStatus.isNotEmpty() || section.trialCourt.isNotEmpty()) {
+            // Legal Attribute & Integrity Badges
+            val hasBadges = section.bailableStatus.isNotEmpty() ||
+                section.cognizableStatus.isNotEmpty() ||
+                section.trialCourt.isNotEmpty() ||
+                section.isRepealed ||
+                section.isAmended ||
+                section.extractionStatus == ExtractionStatus.PARTIAL
+
+            if (hasBadges) {
                 Spacer(modifier = Modifier.height(10.dp))
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (section.isRepealed) {
+                        LegalBadge(
+                            text = "বিলুপ্ত / রহিত (Repealed)",
+                            color = Color(0xFFC62828)
+                        )
+                    }
+                    if (section.isAmended) {
+                        LegalBadge(
+                            text = "সংশোধিত (Amended)",
+                            color = Color(0xFF6A1B9A)
+                        )
+                    }
+                    if (section.extractionStatus == ExtractionStatus.PARTIAL) {
+                        LegalBadge(
+                            text = "আংশিক পাঠ (Partial)",
+                            color = Color(0xFFE65100)
+                        )
+                    }
                     if (section.bailableStatus.isNotEmpty()) {
                         val isNonBail = section.bailableStatus.contains("অ-জামিন") || section.bailableStatus.contains("Non")
                         LegalBadge(
@@ -441,7 +562,7 @@ fun SectionCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Verbatim Official Text
+            // Verbatim Official Text (complete, never truncated)
             Text(
                 text = section.fullContentBn,
                 style = MaterialTheme.typography.bodyLarge.copy(
@@ -450,6 +571,123 @@ fun SectionCard(
                 ),
                 color = MaterialTheme.colorScheme.onSurface
             )
+
+            // Expandable Hierarchical Subsections / Clauses / Provisos / Exceptions
+            if (subsections.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { expandSubsections = !expandSubsections }
+                                .padding(horizontal = 4.dp, vertical = 6.dp)
+                                .testTag("toggle_subsections_${section.id}"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "উপধারা, দফা ও শর্তাবলীর বিন্যাস (${BanglaNumberUtils.toBanglaDigits(subsections.size)}টি অংশ)",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Icon(
+                                imageVector = if (expandSubsections) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (expandSubsections) "সংকুচিত করুন" else "বিস্তারিত দেখুন",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        AnimatedVisibility(visible = expandSubsections) {
+                            Column(
+                                modifier = Modifier.padding(top = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                subsections.forEach { node ->
+                                    val isChild = node.parentSubsectionId != null ||
+                                        node.nodeType == SubsectionNodeType.CLAUSE ||
+                                        node.nodeType == SubsectionNodeType.SUBCLAUSE
+                                    val nodeBadgeLabel = when (node.nodeType) {
+                                        SubsectionNodeType.PROVISO -> "শর্তাংশ"
+                                        SubsectionNodeType.EXPLANATION -> "ব্যাখ্যা"
+                                        SubsectionNodeType.EXCEPTION -> "ব্যতিক্রম"
+                                        SubsectionNodeType.ILLUSTRATION -> "দৃষ্টান্ত"
+                                        SubsectionNodeType.CLAUSE -> "দফা ${node.subsectionNumber}"
+                                        SubsectionNodeType.SUBCLAUSE -> "উপদফা ${node.subsectionNumber}"
+                                        else -> "উপধারা ${node.subsectionNumber}"
+                                    }
+                                    val nodeBadgeColor = when (node.nodeType) {
+                                        SubsectionNodeType.PROVISO -> Color(0xFF00695C)
+                                        SubsectionNodeType.EXPLANATION -> Color(0xFF1565C0)
+                                        SubsectionNodeType.EXCEPTION -> Color(0xFFC62828)
+                                        SubsectionNodeType.ILLUSTRATION -> Color(0xFF6A1B9A)
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = if (isChild) 14.dp else 2.dp)
+                                            .background(
+                                                MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                                                RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(10.dp)
+                                    ) {
+                                        LegalBadge(
+                                            text = nodeBadgeLabel,
+                                            color = nodeBadgeColor
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = node.subsectionText,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontSize = 14.sp * textScale,
+                                                lineHeight = 21.sp * textScale
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Footnotes Section
+            if (footnotes.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "পাদটীকা (Footnotes)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        footnotes.forEach { fn ->
+                            Text(
+                                text = "[${fn.footnoteMarker}] ${fn.footnoteText}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
 
             // Simplified Explanation Box (সহজ সরল ও সাবলীল ব্যাখ্যা)
             if (section.simplifiedExplanationBn.isNotEmpty()) {
@@ -474,7 +712,7 @@ fun SectionCard(
                             )
                             IconButton(
                                 onClick = { showEditExplanationDialog = true },
-                                modifier = Modifier.size(28.dp).testTag("edit_explanation_${section.id}")
+                                modifier = Modifier.size(36.dp).testTag("edit_explanation_${section.id}")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
@@ -520,7 +758,7 @@ fun SectionCard(
                             )
                             IconButton(
                                 onClick = { showEditNoteDialog = true },
-                                modifier = Modifier.size(28.dp).testTag("edit_note_${section.id}")
+                                modifier = Modifier.size(36.dp).testTag("edit_note_${section.id}")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
@@ -569,15 +807,16 @@ fun SectionCard(
                     // Copy Section
                     IconButton(
                         onClick = {
+                            val exportBody = buildCompleteSectionTextForExport(section, subsections, footnotes)
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText(
                                 "Section ${section.sectionNumberBn}",
-                                "${section.titleBn} (ধারা ${section.sectionNumberBn})\n\n${section.fullContentBn}\n\nউৎস: $officialSourceUrl"
+                                "${section.titleBn} (ধারা ${section.sectionNumberBn})\n\n$exportBody\n\nউৎস: $officialSourceUrl"
                             )
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "ধারা কপি করা হয়েছে", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "সম্পূর্ণ ধারা ও উপধারা কপি করা হয়েছে", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(36.dp).testTag("copy_section_${section.id}")
+                        modifier = Modifier.size(48.dp).testTag("copy_section_${section.id}")
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -590,17 +829,18 @@ fun SectionCard(
                     // Share Section
                     IconButton(
                         onClick = {
+                            val exportBody = buildCompleteSectionTextForExport(section, subsections, footnotes)
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_SUBJECT, "${section.titleBn} (ধারা ${section.sectionNumberBn})")
                                 putExtra(
                                     Intent.EXTRA_TEXT,
-                                    "আইন: $lawTitleBn\nধারা: ${section.sectionNumberBn} - ${section.titleBn}\n\n${section.fullContentBn}\n\nসহজ ব্যাখ্যা: ${section.simplifiedExplanationBn}\n\nতথ্যসূত্র: $officialSourceUrl"
+                                    "আইন: $lawTitleBn\nধারা: ${section.sectionNumberBn} - ${section.titleBn}\n\n$exportBody\n\nতথ্যসূত্র: $officialSourceUrl"
                                 )
                             }
                             context.startActivity(Intent.createChooser(shareIntent, "ধারা শেয়ার করুন"))
                         },
-                        modifier = Modifier.size(36.dp).testTag("share_section_${section.id}")
+                        modifier = Modifier.size(48.dp).testTag("share_section_${section.id}")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Share,
@@ -613,6 +853,7 @@ fun SectionCard(
                     // PDF Export Section
                     IconButton(
                         onClick = {
+                            val exportBody = buildCompleteSectionTextForExport(section, subsections, footnotes)
                             val file = PdfExporter.exportLawToPdf(
                                 context = context,
                                 lawTitleBn = lawTitleBn,
@@ -621,7 +862,7 @@ fun SectionCard(
                                 sections = listOf(
                                     Pair(
                                         "ধারা ${section.sectionNumberBn}: ${section.titleBn}",
-                                        "${section.fullContentBn}\n\n[সহজ সরল ব্যাখ্যা ও আইনের প্রায়োগিক দিক]\n${section.simplifiedExplanationBn}"
+                                        exportBody
                                     )
                                 ),
                                 officialSourceUrl = officialSourceUrl
@@ -632,7 +873,7 @@ fun SectionCard(
                                 Toast.makeText(context, "পিডিএফ তৈরি ব্যর্থ হয়েছে", Toast.LENGTH_SHORT).show()
                             }
                         },
-                        modifier = Modifier.size(36.dp).testTag("pdf_section_${section.id}")
+                        modifier = Modifier.size(48.dp).testTag("pdf_section_${section.id}")
                     ) {
                         Icon(
                             imageVector = Icons.Default.PictureAsPdf,

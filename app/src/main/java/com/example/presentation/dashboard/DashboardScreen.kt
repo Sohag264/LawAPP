@@ -72,6 +72,10 @@ fun DashboardScreen(
     val favorites by viewModel.allFavorites.collectAsStateWithLifecycle()
     val bookmarks by viewModel.allBookmarks.collectAsStateWithLifecycle()
     val notes by viewModel.allNotes.collectAsStateWithLifecycle()
+    val verificationReports by viewModel.allVerificationReports.collectAsStateWithLifecycle()
+    val reportsByLawId = androidx.compose.runtime.remember(verificationReports) {
+        verificationReports.associateBy { it.lawId }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -283,7 +287,8 @@ fun DashboardScreen(
                 isFavorite = isFav,
                 onFavoriteToggle = { viewModel.toggleLawFavorite(law.id, isFav) },
                 onClick = { onNavigateToLaw(law.id) },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                verificationReport = reportsByLawId[law.id]
             )
         }
 

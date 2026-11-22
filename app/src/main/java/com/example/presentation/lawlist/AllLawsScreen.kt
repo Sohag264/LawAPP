@@ -43,31 +43,13 @@ fun AllLawsScreen(
     onNavigateToLaw: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val allLaws by viewModel.allLaws.collectAsStateWithLifecycle()
+    val displayedLaws by viewModel.filteredLawsByCategory.collectAsStateWithLifecycle()
     val categories by viewModel.allCategories.collectAsStateWithLifecycle()
     val selectedCategoryId by viewModel.selectedCategoryId.collectAsStateWithLifecycle()
     val favorites by viewModel.allFavorites.collectAsStateWithLifecycle()
-
-    // Determine laws to display: either all or filtered by category cross-ref
-    val displayedLaws = if (selectedCategoryId == null) {
-        allLaws
-    } else {
-        // Find laws belonging to selected category
-        when (selectedCategoryId) {
-            1L -> allLaws.filter { it.id == 1L } // Constitution
-            2L -> allLaws.filter { it.id in listOf(2L, 3L, 6L, 8L) } // Criminal
-            3L -> allLaws.filter { it.id == 3L } // CrPC
-            4L -> allLaws.filter { it.id == 4L } // Evidence
-            5L -> allLaws.filter { it.id in listOf(5L, 7L, 10L) } // Civil
-            6L -> allLaws.filter { it.id == 6L } // Women & Child
-            7L -> allLaws.filter { it.id == 8L } // Narcotics
-            9L -> allLaws.filter { it.id == 7L } // Land & Specific Relief
-            10L -> allLaws.filter { it.id == 11L } // Family
-            12L -> allLaws.filter { it.id == 9L } // Anti-Corruption
-            15L -> allLaws.filter { it.id == 12L } // Road Transport
-            20L -> allLaws.filter { it.id == 10L } // Limitation Act
-            else -> allLaws
-        }
+    val verificationReports by viewModel.allVerificationReports.collectAsStateWithLifecycle()
+    val reportsByLawId = androidx.compose.runtime.remember(verificationReports) {
+        verificationReports.associateBy { it.lawId }
     }
 
     Scaffold(
@@ -186,7 +168,8 @@ fun AllLawsScreen(
                             law = law,
                             isFavorite = isFav,
                             onFavoriteToggle = { viewModel.toggleLawFavorite(law.id, isFav) },
-                            onClick = { onNavigateToLaw(law.id) }
+                            onClick = { onNavigateToLaw(law.id) },
+                            verificationReport = reportsByLawId[law.id]
                         )
                     }
                 }

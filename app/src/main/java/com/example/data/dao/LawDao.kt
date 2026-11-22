@@ -4,7 +4,6 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Transaction
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.ChapterEntity
 import com.example.data.entity.LawCategoryCrossRef
@@ -15,6 +14,9 @@ import kotlinx.coroutines.flow.Flow
 interface LawDao {
     @Query("SELECT * FROM laws ORDER BY isConstitution DESC, actYear ASC, titleBn ASC")
     fun getAllLaws(): Flow<List<LawEntity>>
+
+    @Query("SELECT * FROM laws ORDER BY isConstitution DESC, actYear ASC, titleBn ASC")
+    suspend fun getAllLawsDirect(): List<LawEntity>
 
     @Query("SELECT * FROM laws WHERE isPopular = 1 OR isConstitution = 1 ORDER BY isConstitution DESC, actYear ASC")
     fun getPopularLaws(): Flow<List<LawEntity>>
@@ -42,11 +44,26 @@ interface LawDao {
     @Query("SELECT * FROM chapters WHERE lawId = :lawId ORDER BY orderIndex ASC")
     fun getChaptersForLaw(lawId: Long): Flow<List<ChapterEntity>>
 
+    @Query("SELECT * FROM chapters WHERE lawId = :lawId ORDER BY orderIndex ASC")
+    suspend fun getChaptersForLawDirect(lawId: Long): List<ChapterEntity>
+
     @Query("SELECT COUNT(*) FROM laws")
     fun getLawCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM laws")
+    suspend fun getLawCountDirect(): Int
+
+    @Query("SELECT COUNT(*) FROM chapters")
+    fun getChapterCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM chapters")
+    suspend fun getChapterCountDirect(): Int
+
     @Query("SELECT COUNT(*) FROM categories")
     fun getCategoryCount(): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLaw(law: LawEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLaws(laws: List<LawEntity>)
@@ -54,11 +71,30 @@ interface LawDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategories(categories: List<CategoryEntity>)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCategoryCrossRefs(refs: List<LawCategoryCrossRef>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChapters(chapters: List<ChapterEntity>)
+
+    @Query("DELETE FROM chapters WHERE lawId = :lawId")
+    suspend fun deleteChaptersForLaw(lawId: Long)
+
+    @Query("""
+        UPDATE laws SET 
+            extractionStatus = :extractionStatus, 
+            verificationStatus = :verificationStatus, 
+            lastVerifiedAt = :verifiedAt,
+            sourceContentHash = :sourceHash
+        WHERE id = :lawId
+    """)
+    suspend fun updateLawVerification(
+        lawId: Long,
+        extractionStatus: String,
+        verificationStatus: String,
+        verifiedAt: Long,
+        sourceHash: String?
+    )
 
     @Query("""
         SELECT * FROM laws

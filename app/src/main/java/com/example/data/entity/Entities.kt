@@ -1,15 +1,43 @@
 package com.example.data.entity
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+
+object ExtractionStatus {
+    const val COMPLETE = "COMPLETE"
+    const val PARTIAL = "PARTIAL"
+    const val NOT_EXTRACTED = "NOT_EXTRACTED"
+    const val FAILED = "FAILED"
+}
+
+object VerificationStatus {
+    const val VERIFIED = "VERIFIED"
+    const val INCOMPLETE = "INCOMPLETE"
+    const val MISMATCH = "MISMATCH"
+    const val UNVERIFIED = "UNVERIFIED"
+    const val OCR_UNVERIFIED = "OCR_UNVERIFIED"
+}
+
+object SubsectionNodeType {
+    const val SUBSECTION = "SUBSECTION"
+    const val CLAUSE = "CLAUSE"
+    const val SUBCLAUSE = "SUBCLAUSE"
+    const val PROVISO = "PROVISO"
+    const val EXPLANATION = "EXPLANATION"
+    const val EXCEPTION = "EXCEPTION"
+    const val ILLUSTRATION = "ILLUSTRATION"
+}
 
 @Entity(
     tableName = "laws",
     indices = [
         Index(value = ["actYear"]),
         Index(value = ["titleBn"]),
-        Index(value = ["titleEn"])
+        Index(value = ["titleEn"]),
+        Index(value = ["extractionStatus"]),
+        Index(value = ["verificationStatus"])
     ]
 )
 data class LawEntity(
@@ -26,7 +54,11 @@ data class LawEntity(
     val effectiveDate: String = "",
     val totalSections: Int = 0,
     val isPopular: Boolean = false,
-    val isConstitution: Boolean = false
+    val isConstitution: Boolean = false,
+    val extractionStatus: String = ExtractionStatus.PARTIAL,
+    val verificationStatus: String = VerificationStatus.INCOMPLETE,
+    val lastVerifiedAt: Long? = null,
+    val sourceContentHash: String? = null
 )
 
 @Entity(tableName = "categories")
@@ -50,7 +82,7 @@ data class LawCategoryCrossRef(
 
 @Entity(
     tableName = "chapters",
-    indices = [Index(value = ["lawId"])]
+    indices = [Index(value = ["lawId"]), Index(value = ["lawId", "orderIndex"])]
 )
 data class ChapterEntity(
     @PrimaryKey val id: Long,
@@ -70,7 +102,8 @@ data class ChapterEntity(
         Index(value = ["sectionNumberBn"]),
         Index(value = ["sectionNumberEn"]),
         Index(value = ["titleBn"]),
-        Index(value = ["titleEn"])
+        Index(value = ["titleEn"]),
+        Index(value = ["lawId", "orderIndex"])
     ]
 )
 data class SectionEntity(
@@ -89,7 +122,118 @@ data class SectionEntity(
     val bailableStatus: String = "",
     val cognizableStatus: String = "",
     val trialCourt: String = "",
-    val orderIndex: Int = 0
+    val orderIndex: Int = 0,
+    val originalHtml: String = "",
+    val contentHash: String = "",
+    val sourceUrl: String = "",
+    val extractionStatus: String = ExtractionStatus.COMPLETE,
+    val verificationStatus: String = VerificationStatus.UNVERIFIED,
+    val isRepealed: Boolean = false,
+    val isAmended: Boolean = false,
+    val amendmentNote: String = ""
+)
+
+@Entity(
+    tableName = "subsections",
+    foreignKeys = [
+        ForeignKey(
+            entity = SectionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sectionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["sectionId"]),
+        Index(value = ["parentSubsectionId"]),
+        Index(value = ["sectionId", "sequenceOrder"])
+    ]
+)
+data class SubsectionEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sectionId: Long,
+    val parentSubsectionId: Long? = null,
+    val subsectionNumber: String,
+    val nodeType: String = SubsectionNodeType.SUBSECTION,
+    val subsectionText: String,
+    val sequenceOrder: Int = 0
+)
+
+@Entity(
+    tableName = "footnotes",
+    foreignKeys = [
+        ForeignKey(
+            entity = SectionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sectionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["sectionId"]),
+        Index(value = ["lawId"])
+    ]
+)
+data class FootnoteEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sectionId: Long,
+    val lawId: Long,
+    val footnoteMarker: String,
+    val footnoteText: String,
+    val sequenceOrder: Int = 0
+)
+
+@Entity(
+    tableName = "schedules",
+    indices = [Index(value = ["lawId"])]
+)
+data class ScheduleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val lawId: Long,
+    val scheduleNumber: String,
+    val title: String,
+    val contentText: String,
+    val originalHtml: String = "",
+    val sequenceOrder: Int = 0
+)
+
+@Entity(
+    tableName = "amendments",
+    indices = [Index(value = ["lawId"]), Index(value = ["sectionId"])]
+)
+data class AmendmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val lawId: Long,
+    val sectionId: Long? = null,
+    val amendingActName: String,
+    val amendingActNumber: String,
+    val amendmentYear: Int,
+    val summaryBn: String
+)
+
+@Entity(tableName = "database_metadata")
+data class DatabaseMetadataEntity(
+    @PrimaryKey val key: String,
+    val value: String,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "verification_reports")
+data class LawVerificationReportEntity(
+    @PrimaryKey val lawId: Long,
+    val expectedSectionsCount: Int,
+    val actualSectionsCount: Int,
+    val completeSectionsCount: Int,
+    val incompleteSectionsCount: Int,
+    val repealedSectionsCount: Int,
+    val missingSectionsCount: Int,
+    val missingSectionsList: String,
+    val verifiedSubsectionsCount: Int,
+    val incompleteSubsectionsCount: Int,
+    val duplicateSectionsList: String,
+    val parsingErrorsList: String,
+    val isComplete: Boolean,
+    val verifiedAt: Long = System.currentTimeMillis()
 )
 
 @Entity(
@@ -111,7 +255,7 @@ data class BookmarkEntity(
 data class FavoriteEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val lawId: Long,
-    val sectionId: Long? = null, // null means whole law is favorited
+    val sectionId: Long? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 

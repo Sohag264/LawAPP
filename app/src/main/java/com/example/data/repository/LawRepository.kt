@@ -3,14 +3,23 @@ package com.example.data.repository
 import com.example.data.dao.LawDao
 import com.example.data.dao.SectionDao
 import com.example.data.dao.UserDataDao
+import com.example.data.dao.VerificationDao
 import com.example.data.entity.BookmarkEntity
 import com.example.data.entity.CategoryEntity
 import com.example.data.entity.ChapterEntity
+import com.example.data.entity.DatabaseMetadataEntity
 import com.example.data.entity.FavoriteEntity
+import com.example.data.entity.FootnoteEntity
 import com.example.data.entity.LawEntity
+import com.example.data.entity.LawVerificationReportEntity
 import com.example.data.entity.PersonalNoteEntity
 import com.example.data.entity.ReadingHistoryEntity
+import com.example.data.entity.ScheduleEntity
 import com.example.data.entity.SectionEntity
+import com.example.data.entity.SubsectionEntity
+import com.example.data.entity.VerificationStatus
+import com.example.data.verification.GlobalDataQualitySummary
+import com.example.data.verification.LawVerificationEngine
 import com.example.utils.BanglaNumberUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -37,14 +46,20 @@ data class IntegrityReport(
     val lawCount: Int,
     val sectionCount: Int,
     val categoryCount: Int,
+    val completeLawCount: Int,
+    val incompleteLawCount: Int,
+    val missingSectionsCount: Int,
     val statusMessage: String
 )
 
 class LawRepository(
     private val lawDao: LawDao,
     private val sectionDao: SectionDao,
-    private val userDataDao: UserDataDao
+    private val userDataDao: UserDataDao,
+    private val verificationDao: VerificationDao
 ) {
+    private val verificationEngine = LawVerificationEngine(lawDao, sectionDao, verificationDao)
+
     val allLaws: Flow<List<LawEntity>> = lawDao.getAllLaws()
     val popularLaws: Flow<List<LawEntity>> = lawDao.getPopularLaws()
     val allCategories: Flow<List<CategoryEntity>> = lawDao.getAllCategories()
@@ -52,6 +67,8 @@ class LawRepository(
     val allFavorites: Flow<List<FavoriteEntity>> = userDataDao.getAllFavorites()
     val allNotes: Flow<List<PersonalNoteEntity>> = userDataDao.getAllNotes()
     val readingHistory: Flow<List<ReadingHistoryEntity>> = userDataDao.getRecentHistory(30)
+    val allVerificationReports: Flow<List<LawVerificationReportEntity>> = verificationDao.getAllVerificationReports()
+    val allMetadata: Flow<List<DatabaseMetadataEntity>> = verificationDao.getAllMetadata()
 
     fun getLawById(lawId: Long): Flow<LawEntity?> = lawDao.getLawById(lawId)
     suspend fun getLawByIdDirect(lawId: Long): LawEntity? = lawDao.getLawByIdDirect(lawId)
@@ -62,6 +79,13 @@ class LawRepository(
     fun getChaptersForLaw(lawId: Long): Flow<List<ChapterEntity>> = lawDao.getChaptersForLaw(lawId)
     fun getSectionsForLaw(lawId: Long): Flow<List<SectionEntity>> = sectionDao.getSectionsForLaw(lawId)
     suspend fun getSectionsForLawDirect(lawId: Long): List<SectionEntity> = sectionDao.getSectionsForLawDirect(lawId)
+
+    fun getSubsectionsForLaw(lawId: Long): Flow<List<SubsectionEntity>> = sectionDao.getSubsectionsForLaw(lawId)
+    fun getSubsectionsForSection(sectionId: Long): Flow<List<SubsectionEntity>> = sectionDao.getSubsectionsForSection(sectionId)
+    fun getFootnotesForLaw(lawId: Long): Flow<List<FootnoteEntity>> = sectionDao.getFootnotesForLaw(lawId)
+    fun getSchedulesForLaw(lawId: Long): Flow<List<ScheduleEntity>> = sectionDao.getSchedulesForLaw(lawId)
+    fun getVerificationReportForLaw(lawId: Long): Flow<LawVerificationReportEntity?> =
+        verificationDao.getVerificationReportForLaw(lawId)
 
     fun getSectionsForChapter(chapterId: Long): Flow<List<SectionEntity>> = sectionDao.getSectionsForChapter(chapterId)
     fun getSectionById(sectionId: Long): Flow<SectionEntity?> = sectionDao.getSectionById(sectionId)
@@ -153,7 +177,6 @@ class LawRepository(
                 updatedAt = System.currentTimeMillis()
             )
         )
-        // Also update note column on section for fast reading view
         sectionDao.updateUserNotes(sectionId, noteText)
     }
 
@@ -177,15 +200,65 @@ class LawRepository(
                 totalCategories = cCount,
                 totalBookmarks = bCount,
                 totalFavorites = fCount,
-                totalNotes = 0 // Will be reflected in notes list
+                totalNotes = 0
             )
         }
+    }
+
+    // Reactive Global Data Quality Summary for Settings Data Quality Dashboard
+    fun getGlobalDataQualitySummary(): Flow<GlobalDataQualitySummary> {
+        val countsFlow = combine(
+            lawDao.getLawCount(),
+            lawDao.getChapterCount(),
+            sectionDao.getSectionCount(),
+            sectionDao.getSubsectionCount()
+        ) { lawsCount, chaptersCount, sectionsCount, subsectionsCount ->
+            listOf(lawsCount, chaptersCount, sectionsCount, subsectionsCount)
+        }
+
+        return combine(
+            countsFlow,
+            allLaws,
+            allVerificationReports,
+            allMetadata
+        ) { counts, laws, reports, metadata ->
+            val completeCount = reports.count { it.isComplete }
+            val incompleteCount = reports.count { !it.isComplete }
+            val missingSectionsSum = reports.sumOf { it.missingSectionsCount }
+            val incompleteSubsSum = reports.sumOf { it.incompleteSubsectionsCount }
+            val unverifiedCount = laws.count {
+                it.verificationStatus == VerificationStatus.UNVERIFIED ||
+                    it.verificationStatus == VerificationStatus.INCOMPLETE ||
+                    it.verificationStatus == VerificationStatus.OCR_UNVERIFIED
+            }
+            val lastVerifiedAt = metadata
+                .firstOrNull { it.key == "last_verification_at" }
+                ?.value?.toLongOrNull()
+                ?: reports.maxOfOrNull { it.verifiedAt }
+
+            GlobalDataQualitySummary(
+                totalLaws = counts[0],
+                totalChapters = counts[1],
+                totalSections = counts[2],
+                totalSubsections = counts[3],
+                completeLawsCount = completeCount,
+                incompleteLawsCount = incompleteCount,
+                totalMissingSectionsCount = missingSectionsSum,
+                totalIncompleteSubsectionsCount = incompleteSubsSum,
+                unverifiedLawsCount = unverifiedCount,
+                lastVerifiedAt = lastVerifiedAt
+            )
+        }
+    }
+
+    suspend fun runFullVerification(): List<LawVerificationReportEntity> {
+        return verificationEngine.verifyAllLaws()
     }
 
     // Export User Backup (Bookmarks, Notes, Favorites)
     suspend fun exportUserBackupJson(): String {
         val root = JSONObject()
-        root.put("version", 1)
+        root.put("version", 2)
         root.put("exportedAt", System.currentTimeMillis())
 
         val bookmarksArr = JSONArray()
@@ -289,36 +362,43 @@ class LawRepository(
         }
     }
 
-    // Verify Database Integrity
+    // Real Database Integrity & Completeness Check (no hardcoded values!)
     suspend fun verifyDatabaseIntegrity(): IntegrityReport {
         return try {
-            val l1 = lawDao.getLawByIdDirect(1)
-            val l2 = lawDao.getLawByIdDirect(2)
-            val sec302 = sectionDao.getSectionByIdDirect(205)
+            val reports = verificationEngine.verifyAllLaws()
+            val actualLaws = lawDao.getLawCountDirect()
+            val actualSections = sectionDao.getSectionCountDirect()
+            val completeLaws = reports.count { it.isComplete }
+            val incompleteLaws = reports.count { !it.isComplete }
+            val totalMissing = reports.sumOf { it.missingSectionsCount }
+            val totalTruncated = reports.sumOf { it.incompleteSectionsCount }
 
-            if (l1 != null && l2 != null && sec302 != null) {
-                IntegrityReport(
-                    isValid = true,
-                    lawCount = 12,
-                    sectionCount = 35,
-                    categoryCount = 20,
-                    statusMessage = "ডেটাবেজ সম্পূর্ণ সক্রিয়, ত্রুটিমুক্ত এবং বৈধ। সকল সূচক ও লিংক সঠিক।"
-                )
+            val allComplete = actualLaws > 0 && incompleteLaws == 0 && totalMissing == 0 && totalTruncated == 0
+            val statusMessage = if (allComplete) {
+                "সকল $actualLaws টি আইন ($actualSections টি ধারা) সম্পূর্ণ এবং সরকারি উৎসের সঙ্গে যাচাইকৃত।"
             } else {
-                IntegrityReport(
-                    isValid = false,
-                    lawCount = 0,
-                    sectionCount = 0,
-                    categoryCount = 0,
-                    statusMessage = "ডেটাবেজ সূচকে অসঙ্গতি পাওয়া গেছে। অনুগ্রহ করে ডেটাবেজ রিলোড করুন।"
-                )
+                "যাচাই সম্পন্ন: মোট $actualLaws টি আইনের মধ্যে $completeLaws টি সম্পূর্ণ ও $incompleteLaws টি আংশিক/অসম্পূর্ণ (মোট $totalMissing টি অনুপস্থিত ধারা শনাক্ত হয়েছে)। বিস্তারিত দেখতে Data Quality Dashboard দেখুন।"
             }
+
+            IntegrityReport(
+                isValid = totalTruncated == 0 && actualLaws > 0,
+                lawCount = actualLaws,
+                sectionCount = actualSections,
+                categoryCount = 20,
+                completeLawCount = completeLaws,
+                incompleteLawCount = incompleteLaws,
+                missingSectionsCount = totalMissing,
+                statusMessage = statusMessage
+            )
         } catch (e: Exception) {
             IntegrityReport(
                 isValid = false,
                 lawCount = 0,
                 sectionCount = 0,
                 categoryCount = 0,
+                completeLawCount = 0,
+                incompleteLawCount = 0,
+                missingSectionsCount = 0,
                 statusMessage = "যাচাইকরণে ত্রুটি: ${e.localizedMessage}"
             )
         }
