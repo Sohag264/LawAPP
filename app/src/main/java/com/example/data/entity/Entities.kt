@@ -17,6 +17,7 @@ object VerificationStatus {
     const val INCOMPLETE = "INCOMPLETE"
     const val MISMATCH = "MISMATCH"
     const val UNVERIFIED = "UNVERIFIED"
+    const val VERIFICATION_PENDING = "VERIFICATION_PENDING"
     const val OCR_UNVERIFIED = "OCR_UNVERIFIED"
 }
 
@@ -222,12 +223,15 @@ data class DatabaseMetadataEntity(
 data class LawVerificationReportEntity(
     @PrimaryKey val lawId: Long,
     val expectedSectionsCount: Int,
+    val checkedSectionNumbersCount: Int = expectedSectionsCount,
     val actualSectionsCount: Int,
     val completeSectionsCount: Int,
     val incompleteSectionsCount: Int,
     val repealedSectionsCount: Int,
+    val verificationPendingCount: Int = 0,
     val missingSectionsCount: Int,
     val missingSectionsList: String,
+    val incompleteSectionsList: String = "",
     val verifiedSubsectionsCount: Int,
     val incompleteSubsectionsCount: Int,
     val duplicateSectionsList: String,

@@ -112,10 +112,10 @@ fun SettingsScreen(
     var pendingImportLawId by remember { mutableStateOf<Long?>(null) }
 
     val importDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importOfficialDocumentUri(uri, targetLawId = pendingImportLawId)
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importOfficialDocumentUris(uris, targetLawId = pendingImportLawId)
         }
         pendingImportLawId = null
     }
@@ -725,13 +725,15 @@ fun SettingsScreen(
                         Text("এই আইনের জন্য এখনও কোনো যাচাইকরণ প্রতিবেদন তৈরি হয়নি।")
                     } else {
                         Text(
-                            text = "প্রত্যাশিত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.expectedSectionsCount)}টি\n" +
-                                "সংরক্ষিত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.actualSectionsCount)}টি\n" +
-                                "সম্পূর্ণ ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.completeSectionsCount)}টি\n" +
-                                "অসম্পূর্ণ ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.incompleteSectionsCount)}টি\n" +
-                                "বিলুপ্ত/রহিত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.repealedSectionsCount)}টি\n" +
-                                "যাচাইকৃত উপধারা: ${BanglaNumberUtils.toBanglaDigits(rep.verifiedSubsectionsCount)}টি\n" +
-                                "অসম্পূর্ণ উপধারা: ${BanglaNumberUtils.toBanglaDigits(rep.incompleteSubsectionsCount)}টি",
+                            text = "১. পরীক্ষিত ধারা নম্বর: ${BanglaNumberUtils.toBanglaDigits(rep.checkedSectionNumbersCount)}টি\n" +
+                                "২. প্রকৃত ধারা পাওয়া গেছে: ${BanglaNumberUtils.toBanglaDigits(rep.actualSectionsCount)}টি\n" +
+                                "৩. সম্পূর্ণ সংযুক্ত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.completeSectionsCount)}টি\n" +
+                                "৪. আংশিক সংযুক্ত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.incompleteSectionsCount)}টি\n" +
+                                "৫. অনুপস্থিত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.missingSectionsCount)}টি\n" +
+                                "৬. বিলুপ্ত/রহিত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.repealedSectionsCount)}টি\n" +
+                                "৭. যাচাই অপেক্ষমাণ: ${BanglaNumberUtils.toBanglaDigits(rep.verificationPendingCount)}টি\n" +
+                                "৮. অসম্পূর্ণ মূল পাঠ/উপধারা: ${rep.incompleteSectionsList.ifBlank { "শনাক্ত হয়নি" }}\n" +
+                                "যাচাইকৃত উপধারা: ${BanglaNumberUtils.toBanglaDigits(rep.verifiedSubsectionsCount)}টি  •  অসম্পূর্ণ উপধারা: ${BanglaNumberUtils.toBanglaDigits(rep.incompleteSubsectionsCount)}টি",
                             style = MaterialTheme.typography.bodySmall,
                             lineHeight = 20.sp
                         )

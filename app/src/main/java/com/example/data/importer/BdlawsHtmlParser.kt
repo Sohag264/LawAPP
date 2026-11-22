@@ -24,6 +24,8 @@ data class ParsedSection(
     val titleEn: String,
     val completeSectionText: String,
     val originalHtml: String,
+    val sectionSourceUrl: String = "",
+    val isEnglishPrimary: Boolean = false,
     val chapterOrderIndex: Int,
     val sequenceOrder: Int,
     val contentHash: String,
@@ -59,11 +61,36 @@ data class ParsedLawPackage(
 object BdlawsHtmlParser {
 
     private val SECTION_NUM_PREFIX_REGEX = Regex(
-        "^(?:ধারা|অনুচ্ছেদ|Section|Article|Sec\\.)?\\s*([০-৯]+(?:[ক-হA-Za-z])?|\\d+(?:[A-Za-zক-হ])?)\\s*[।.\\-:–—)]?\\s*(.*)$",
+        "^(?:\\[|\\d+\\[)?\\s*(?:ধারা|অনুচ্ছেদ|Section|Article|Sec\\.)?\\s*([০-৯]+(?:[ক-হA-Za-z]{1,2})?|\\d+(?:[A-Za-zক-হ]{1,2})?)\\s*(?:\\]|\\.)?[।.\\-:–—)]?\\s*(.*)$",
         RegexOption.IGNORE_CASE
+    )
+    private val BODY_SECTION_NUM_REGEX = Regex(
+        "^(?:\\[|\\d+\\[)?\\s*([০-৯]+(?:[ক-হA-Za-z]{1,2})?|\\d+(?:[A-Za-zক-হ]{1,2})?)\\s*\\.?[।.\\-:–—)]?\\s+(.+)$",
+        RegexOption.DOT_MATCHES_ALL
     )
     private val YEAR_REGEX = Regex("(1[7-9]\\d{2}|20\\d{2}|[১৭৮৯০-৯]{4})")
     private val BENGALI_CHAR_REGEX = Regex("[\\u0980-\\u09FF]")
+
+    private val BENGALI_SUFFIX_ORDER = "কখগঘঙচছজঝঞটঠডঢণতথদধনপফবভমযরলশষসহ"
+
+    fun computeLegalOrderIndex(sectionNumberEn: String, fallbackSeq: Int): Int {
+        val clean = BanglaNumberUtils.toEnglishDigits(sectionNumberEn).trim().uppercase()
+        val m = Regex("^(\\d+)([A-Z\\u0995-\\u09B9]*)$").matchEntire(clean) ?: return 1_000_000 + fallbackSeq
+        val base = m.groupValues[1].toIntOrNull() ?: return 1_000_000 + fallbackSeq
+        val suffix = m.groupValues[2]
+        val suffixWeight = if (suffix.isEmpty()) {
+            0
+        } else {
+            val firstChar = suffix[0]
+            val baseWeight = when {
+                firstChar in 'A'..'Z' -> (firstChar - 'A' + 1)
+                BENGALI_SUFFIX_ORDER.indexOf(firstChar) >= 0 -> BENGALI_SUFFIX_ORDER.indexOf(firstChar) + 1
+                else -> 40
+            }
+            if (suffix.length == 1) baseWeight else 40 + baseWeight
+        }
+        return base * 100 + suffixWeight
+    }
 
     /**
      * Parses one or more HTML pages from bdlaws.minlaw.gov.bd (handles paginated acts seamlessly).
@@ -100,7 +127,8 @@ object BdlawsHtmlParser {
             val chapterMap = mutableMapOf<Int, Int>()
             for (ch in page.chapters) {
                 val existing = combinedChapters.find {
-                    it.chapterNumberBn == ch.chapterNumberBn && it.titleBn == ch.titleBn
+                    it.chapterNumberEn.equals(ch.chapterNumberEn, ignoreCase = true) ||
+                        (it.chapterNumberBn == ch.chapterNumberBn && it.titleBn == ch.titleBn)
                 }
                 if (existing != null) {
                     chapterMap[ch.orderIndex] = existing.orderIndex
@@ -111,14 +139,28 @@ object BdlawsHtmlParser {
                 }
             }
             for (sec in page.sections) {
-                sectionSeq++
                 val mappedChapterOrder = chapterMap[sec.chapterOrderIndex] ?: 1
-                combinedSections.add(
-                    sec.copy(
-                        chapterOrderIndex = mappedChapterOrder,
-                        sequenceOrder = sectionSeq
+                val key = BanglaNumberUtils.toEnglishDigits(sec.sectionNumberEn).trim().uppercase()
+                val existingIdx = combinedSections.indexOfFirst {
+                    BanglaNumberUtils.toEnglishDigits(it.sectionNumberEn).trim().uppercase() == key
+                }
+                if (existingIdx >= 0) {
+                    val existing = combinedSections[existingIdx]
+                    if (sec.completeSectionText.length > existing.completeSectionText.length) {
+                        combinedSections[existingIdx] = sec.copy(
+                            chapterOrderIndex = mappedChapterOrder,
+                            sequenceOrder = existing.sequenceOrder
+                        )
+                    }
+                } else {
+                    sectionSeq++
+                    combinedSections.add(
+                        sec.copy(
+                            chapterOrderIndex = mappedChapterOrder,
+                            sequenceOrder = computeLegalOrderIndex(sec.sectionNumberEn, sectionSeq)
+                        )
                     )
-                )
+                }
             }
             for (sch in page.schedules) {
                 scheduleSeq++
@@ -127,15 +169,16 @@ object BdlawsHtmlParser {
             combinedErrors.addAll(page.parsingErrors)
         }
 
+        val sortedSections = combinedSections.sortedBy { computeLegalOrderIndex(it.sectionNumberEn, it.sequenceOrder) }
         val combinedHash = HashUtils.sha256(
-            combinedSections.joinToString("\n") { "${it.sectionNumberEn}:${it.contentHash}" }
+            sortedSections.joinToString("\n") { "${it.sectionNumberEn}:${it.contentHash}" }
         )
 
         return first.copy(
             chapters = combinedChapters,
-            sections = combinedSections,
+            sections = sortedSections,
             schedules = combinedSchedules,
-            parsingErrors = combinedErrors,
+            parsingErrors = combinedErrors.distinct(),
             sourceContentHash = combinedHash
         )
     }
@@ -197,8 +240,10 @@ object BdlawsHtmlParser {
             return currentChapterOrder
         }
 
-        // 4. Locate section / chapter / schedule DOM blocks
-        val bdlawsRows = mainContainer.select(".act-chapter-group, .act-part-group, .lineremoves, .section-row, .act-section, .schedule, section[data-section]")
+        // 4. Locate section / chapter / schedule DOM blocks (supports act-11.html and act-chapter-print-*.html)
+        val bdlawsRows = mainContainer.select(
+            ".act-chapter-group, .act-part-group, .panel-heading, .chapter-header, .lineremoves, .section-row, .act-section, .schedule, section[data-section]"
+        )
 
         if (bdlawsRows.isNotEmpty()) {
             for (node in bdlawsRows) {
@@ -206,9 +251,11 @@ object BdlawsHtmlParser {
                 if (node.parents().any { it in bdlawsRows }) continue
 
                 when {
-                    node.hasClass("act-chapter-group") || node.hasClass("act-part-group") -> {
+                    node.hasClass("act-chapter-group") || node.hasClass("act-part-group") ||
+                        node.hasClass("panel-heading") || node.hasClass("chapter-header") -> {
                         val chNum = node.selectFirst(".act-chapter-no, .chapter-no, .part-no")?.text()?.trim() ?: ""
-                        val chTitle = node.selectFirst(".act-chapter-name, .chapter-title, .part-name, h3, h4")?.text()?.trim() ?: node.text().trim()
+                        val chTitle = node.selectFirst(".act-chapter-name, .chapter-title, .part-name, h3, h4")?.text()?.trim()
+                            ?: node.text().trim()
                         currentChapterOrder++
                         chapters.add(
                             ParsedChapter(
@@ -227,10 +274,15 @@ object BdlawsHtmlParser {
                                 secEl = secEl,
                                 chapterOrder = currentChapterOrder,
                                 sequenceOrder = sectionSequence,
+                                baseSourceUrl = sourceUrl,
                                 footnoteMap = footnoteMap,
                                 errors = errors
                             )
-                            if (parsedSec != null) sections.add(parsedSec)
+                            if (parsedSec != null && sections.none {
+                                it.sectionNumberEn.equals(parsedSec.sectionNumberEn, ignoreCase = true)
+                            }) {
+                                sections.add(parsedSec)
+                            }
                         }
                     }
 
@@ -257,10 +309,15 @@ object BdlawsHtmlParser {
                             secEl = node,
                             chapterOrder = chOrder,
                             sequenceOrder = sectionSequence,
+                            baseSourceUrl = sourceUrl,
                             footnoteMap = footnoteMap,
                             errors = errors
                         )
-                        if (parsedSec != null) sections.add(parsedSec)
+                        if (parsedSec != null && sections.none {
+                            it.sectionNumberEn.equals(parsedSec.sectionNumberEn, ignoreCase = true)
+                        }) {
+                            sections.add(parsedSec)
+                        }
                     }
                 }
             }
@@ -382,6 +439,7 @@ object BdlawsHtmlParser {
         secEl: Element,
         chapterOrder: Int,
         sequenceOrder: Int,
+        baseSourceUrl: String,
         footnoteMap: Map<String, String>,
         errors: MutableList<String>
     ): ParsedSection? {
@@ -393,7 +451,6 @@ object BdlawsHtmlParser {
         val rawBodyText = if (bodyEl != null) {
             extractStructuredText(bodyEl).trim()
         } else {
-            // Clone and remove headEl if present
             val clone = secEl.clone()
             clone.select(".txt-head, .sec-head, .col-sm-3, .section-head, .footnote, .foot-notes").remove()
             extractStructuredText(clone).trim()
@@ -401,7 +458,16 @@ object BdlawsHtmlParser {
 
         if (headText.isEmpty() && rawBodyText.isEmpty()) return null
 
-        // Determine section number & title
+        // Extract per-section official link if present (e.g. /act-section-details-11-1234.html)
+        val rawHref = secEl.selectFirst("a[href*='section'], .txt-head a[href]")?.attr("href")?.trim().orEmpty()
+        val resolvedSectionUrl = when {
+            rawHref.startsWith("http", ignoreCase = true) -> rawHref
+            rawHref.startsWith("/") -> "https://bdlaws.minlaw.gov.bd$rawHref"
+            rawHref.isNotEmpty() -> "https://bdlaws.minlaw.gov.bd/$rawHref"
+            else -> baseSourceUrl
+        }
+
+        // Determine section number & title accurately (handles bdlaws English acts where .txt-head has title and .txt-details starts with "108A. ...")
         var numBn = ""
         var numEn = ""
         var titleText = headText
@@ -409,18 +475,31 @@ object BdlawsHtmlParser {
         val numEl = secEl.selectFirst(".sec-no, .section-number, [data-section-number]")
         if (numEl != null) {
             val rawNum = numEl.attr("data-section-number").ifEmpty { numEl.text().trim() }
+                .replace("[", "").replace("]", "").replace(".", "").trim()
             numBn = BanglaNumberUtils.toBanglaDigits(rawNum)
             numEn = BanglaNumberUtils.toEnglishDigits(rawNum)
         } else {
-            val match = SECTION_NUM_PREFIX_REGEX.matchEntire(headText)
-                ?: SECTION_NUM_PREFIX_REGEX.matchEntire(rawBodyText.lineSequence().firstOrNull() ?: "")
-            if (match != null) {
-                val rawNum = match.groupValues[1]
+            val headMatch = if (headText.isNotEmpty()) SECTION_NUM_PREFIX_REGEX.matchEntire(headText) else null
+            if (headMatch != null) {
+                val rawNum = headMatch.groupValues[1]
                 numBn = BanglaNumberUtils.toBanglaDigits(rawNum)
                 numEn = BanglaNumberUtils.toEnglishDigits(rawNum)
-                val extractedTitle = match.groupValues[2].trim()
-                if (extractedTitle.isNotEmpty() && headText.isNotEmpty()) {
+                val extractedTitle = headMatch.groupValues[2].trim()
+                if (extractedTitle.isNotEmpty()) {
                     titleText = extractedTitle
+                }
+            } else {
+                // In bdlaws.minlaw.gov.bd/act-11.html, .txt-head is title ONLY ("Title and extent...") and .txt-details starts with "1. " or "1[108A. "
+                val firstLine = rawBodyText.lineSequence().firstOrNull()?.trim().orEmpty()
+                val bodyMatch = BODY_SECTION_NUM_REGEX.matchEntire(firstLine)
+                if (bodyMatch != null) {
+                    val rawNum = bodyMatch.groupValues[1]
+                    numBn = BanglaNumberUtils.toBanglaDigits(rawNum)
+                    numEn = BanglaNumberUtils.toEnglishDigits(rawNum)
+                    // Keep titleText from headText! Do NOT overwrite titleText with body text!
+                    if (titleText.isEmpty()) {
+                        titleText = "Section $numEn"
+                    }
                 }
             }
         }
@@ -451,8 +530,9 @@ object BdlawsHtmlParser {
         }
 
         val isRepealed = LegalTextParser.isRepealedOrOmitted(titleText, rawBodyText)
-        val isAmended = LegalTextParser.isAmended(titleText, rawBodyText)
+        val isAmended = LegalTextParser.isAmended(titleText, rawBodyText) || sectionFootnotes.isNotEmpty()
         val subsections = LegalTextParser.parseHierarchy(rawBodyText)
+        val isEnglishPrimary = !BENGALI_CHAR_REGEX.containsMatchIn(rawBodyText) && rawBodyText.isNotBlank()
 
         val status = if (LegalTextParser.isTextLikelyTruncated(rawBodyText, isRepealed)) {
             errors.add("ধারা $numBn ($numEn) এর মূল বক্তব্য অসম্পূর্ণ বা মাঝখানে কাটা পড়েছে।")
@@ -468,8 +548,10 @@ object BdlawsHtmlParser {
             titleEn = titleText,
             completeSectionText = rawBodyText,
             originalHtml = secEl.outerHtml(),
+            sectionSourceUrl = resolvedSectionUrl,
+            isEnglishPrimary = isEnglishPrimary,
             chapterOrderIndex = chapterOrder,
-            sequenceOrder = sequenceOrder,
+            sequenceOrder = computeLegalOrderIndex(numEn, sequenceOrder),
             contentHash = HashUtils.sha256(rawBodyText),
             subsections = subsections,
             footnotes = sectionFootnotes,

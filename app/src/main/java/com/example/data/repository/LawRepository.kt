@@ -228,6 +228,7 @@ class LawRepository(
             val incompleteSubsSum = reports.sumOf { it.incompleteSubsectionsCount }
             val unverifiedCount = laws.count {
                 it.verificationStatus == VerificationStatus.UNVERIFIED ||
+                    it.verificationStatus == VerificationStatus.VERIFICATION_PENDING ||
                     it.verificationStatus == VerificationStatus.INCOMPLETE ||
                     it.verificationStatus == VerificationStatus.OCR_UNVERIFIED
             }

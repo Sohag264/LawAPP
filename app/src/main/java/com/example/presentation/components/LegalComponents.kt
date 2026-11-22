@@ -335,8 +335,12 @@ fun buildCompleteSectionTextForExport(
 ): String {
     val sb = StringBuilder()
     sb.append(section.fullContentBn)
+    if (section.fullContentEn.isNotBlank() && section.fullContentEn.trim() != section.fullContentBn.trim()) {
+        sb.append("\n\n[Official English Text]\n")
+        sb.append(section.fullContentEn)
+    }
     if (subsections.isNotEmpty() && subsections.size > 1) {
-        sb.append("\n\n[উপধারা ও দফা বিশ্লেষণ]\n")
+        sb.append("\n\n[উপধারা, দফা ও ব্যাখ্যা]\n")
         subsections.forEach { sub ->
             val indent = if (sub.parentSubsectionId != null) "   " else ""
             sb.append("$indent${sub.subsectionText}\n")
@@ -347,6 +351,10 @@ fun buildCompleteSectionTextForExport(
         footnotes.forEach { fn ->
             sb.append("[${fn.footnoteMarker}] ${fn.footnoteText}\n")
         }
+    }
+    if (section.amendmentNote.isNotBlank()) {
+        sb.append("\n[সংশোধনী তথ্য]\n")
+        sb.append(section.amendmentNote)
     }
     if (section.simplifiedExplanationBn.isNotEmpty()) {
         sb.append("\n[সহজ সরল ব্যাখ্যা ও আইনের প্রায়োগিক দিক]\n")
@@ -479,12 +487,16 @@ fun SectionCard(
             }
 
             // Legal Attribute & Integrity Badges
+            val isVerificationPending = section.verificationStatus == VerificationStatus.VERIFICATION_PENDING ||
+                section.verificationStatus == VerificationStatus.UNVERIFIED ||
+                section.originalHtml.isBlank()
             val hasBadges = section.bailableStatus.isNotEmpty() ||
                 section.cognizableStatus.isNotEmpty() ||
                 section.trialCourt.isNotEmpty() ||
                 section.isRepealed ||
                 section.isAmended ||
-                section.extractionStatus == ExtractionStatus.PARTIAL
+                section.extractionStatus == ExtractionStatus.PARTIAL ||
+                isVerificationPending
 
             if (hasBadges) {
                 Spacer(modifier = Modifier.height(10.dp))
@@ -508,6 +520,17 @@ fun SectionCard(
                         LegalBadge(
                             text = "আংশিক পাঠ (Partial)",
                             color = Color(0xFFE65100)
+                        )
+                    }
+                    if (section.verificationStatus == VerificationStatus.VERIFIED && section.originalHtml.isNotBlank()) {
+                        LegalBadge(
+                            text = "সরকারি উৎস যাচাইকৃত",
+                            color = Color(0xFF2E7D32)
+                        )
+                    } else if (isVerificationPending) {
+                        LegalBadge(
+                            text = "যাচাই অপেক্ষমাণ",
+                            color = Color(0xFF5D4037)
                         )
                     }
                     if (section.bailableStatus.isNotEmpty()) {
@@ -571,6 +594,33 @@ fun SectionCard(
                 ),
                 color = MaterialTheme.colorScheme.onSurface
             )
+
+            if (section.fullContentEn.isNotBlank() && section.fullContentEn.trim() != section.fullContentBn.trim()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "মূল ইংরেজি পাঠ (Official English Text)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = section.fullContentEn,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 14.sp * textScale,
+                                lineHeight = 21.sp * textScale
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
 
             // Expandable Hierarchical Subsections / Clauses / Provisos / Exceptions
             if (subsections.isNotEmpty()) {

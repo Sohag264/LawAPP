@@ -24,12 +24,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
@@ -46,6 +50,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -124,47 +130,68 @@ fun LawReaderScreen(
     val chaptersById = remember(chapters) { chapters.associateBy { it.id } }
 
     val importDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importOfficialDocumentUri(uri, targetLawId = lawId)
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importOfficialDocumentUris(uris, targetLawId = lawId)
         }
     }
 
     var showInLawSearch by remember { mutableStateOf(false) }
     var inLawQuery by remember { mutableStateOf("") }
+    var selectedChapterId by remember { mutableStateOf<Long?>(null) }
     var showTableOfContents by remember { mutableStateOf(false) }
+    var showCompletenessDialog by remember { mutableStateOf(false) }
 
+    val sectionCountsByChapter = remember(sections) {
+        sections.groupingBy { it.chapterId }.eachCount()
+    }
     val hasVerificationBanner = verificationReport != null || sections.isEmpty()
-    val sectionsStartIndex = 1 + if (hasVerificationBanner) 1 else 0
+    val hasChapterStrip = chapters.isNotEmpty()
+    val sectionsStartIndex = 1 + (if (hasVerificationBanner) 1 else 0) + (if (hasChapterStrip) 1 else 0)
 
     // Scroll to target section if provided
     LaunchedEffect(sections, targetSectionId, sectionsStartIndex) {
         if (targetSectionId != null && sections.isNotEmpty()) {
             val index = sections.indexOfFirst { it.id == targetSectionId }
             if (index != -1) {
+                selectedChapterId = null
                 listState.animateScrollToItem(index + sectionsStartIndex)
                 viewModel.recordHistory(lawId, targetSectionId)
             }
         }
     }
 
-    val filteredSections = if (inLawQuery.isBlank()) {
+    val chapterFiltered = if (selectedChapterId == null) {
         sections
+    } else {
+        sections.filter { it.chapterId == selectedChapterId }
+    }
+
+    val filteredSections = if (inLawQuery.isBlank()) {
+        chapterFiltered
     } else {
         val q = inLawQuery.trim()
         val qBn = BanglaNumberUtils.toBanglaDigits(q)
         val qEn = BanglaNumberUtils.toEnglishDigits(q)
-        sections.filter { s ->
+        chapterFiltered.filter { s ->
             val subTextHit = (subsectionsBySection[s.id] ?: emptyList()).any {
-                it.subsectionText.contains(q, ignoreCase = true) || it.subsectionNumber.contains(q, ignoreCase = true)
+                it.subsectionText.contains(q, ignoreCase = true) ||
+                    it.subsectionNumber.contains(q, ignoreCase = true)
             }
-            s.sectionNumberBn.contains(qBn) ||
-                s.sectionNumberEn.contains(qEn) ||
+            val footnoteHit = (footnotesBySection[s.id] ?: emptyList()).any {
+                it.footnoteText.contains(q, ignoreCase = true)
+            }
+            s.sectionNumberBn.contains(qBn, ignoreCase = true) ||
+                s.sectionNumberEn.contains(qEn, ignoreCase = true) ||
                 s.titleBn.contains(q, ignoreCase = true) ||
+                s.titleEn.contains(q, ignoreCase = true) ||
                 s.fullContentBn.contains(q, ignoreCase = true) ||
+                s.fullContentEn.contains(q, ignoreCase = true) ||
                 s.simplifiedExplanationBn.contains(q, ignoreCase = true) ||
-                subTextHit
+                s.amendmentNote.contains(q, ignoreCase = true) ||
+                subTextHit ||
+                footnoteHit
         }
     }
 
@@ -316,7 +343,7 @@ fun LawReaderScreen(
                         OutlinedTextField(
                             value = inLawQuery,
                             onValueChange = { inLawQuery = it },
-                            placeholder = { Text("এই আইনের ধারা, উপধারা বা শব্দ খুঁজুন…") },
+                            placeholder = { Text("ধারা নম্বর (যেমন ৩০২ / 304A / 108A) বা বাংলা/ইংরেজি শব্দ…") },
                             singleLine = true,
                             trailingIcon = {
                                 if (inLawQuery.isNotEmpty()) {
@@ -488,6 +515,13 @@ fun LawReaderScreen(
                                                 color = Color(0xFF4E342E)
                                             )
                                         }
+                                        if (report.verificationPendingCount > 0) {
+                                            Text(
+                                                text = "যাচাই অপেক্ষমাণ / Missing-Pending: ${BanglaNumberUtils.toBanglaDigits(report.verificationPendingCount)}টি",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF4E342E)
+                                            )
+                                        }
                                         if (report.incompleteSubsectionsCount > 0) {
                                             Text(
                                                 text = "অসম্পূর্ণ উপধারা/শর্ত শনাক্ত: ${BanglaNumberUtils.toBanglaDigits(report.incompleteSubsectionsCount)}টি",
@@ -496,24 +530,103 @@ fun LawReaderScreen(
                                             )
                                         }
                                         Spacer(modifier = Modifier.height(10.dp))
-                                        OutlinedButton(
-                                            onClick = {
-                                                importDocumentLauncher.launch(
-                                                    arrayOf("text/html", "application/json", "application/pdf", "*/*")
-                                                )
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier.testTag("reader_import_official_btn")
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.UploadFile,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("অফিসিয়াল HTML / JSON / PDF ইম্পোর্ট করুন")
+                                            OutlinedButton(
+                                                onClick = {
+                                                    importDocumentLauncher.launch(
+                                                        arrayOf("text/html", "application/json", "application/pdf", "*/*")
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("reader_import_official_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.UploadFile,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("HTML/JSON ইম্পোর্ট", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            OutlinedButton(
+                                                onClick = { showCompletenessDialog = true },
+                                                shape = RoundedCornerShape(10.dp),
+                                                modifier = Modifier.testTag("reader_completeness_report_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Assessment,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("রিপোর্ট")
+                                            }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // Chapter-wise Filter Strip (অধ্যায়ভিত্তিক ধারা তালিকা)
+                    if (hasChapterStrip) {
+                        item {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("chapter_filter_strip")
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = selectedChapterId == null,
+                                        onClick = { selectedChapterId = null },
+                                        label = {
+                                            Text("সকল অধ্যায় (${BanglaNumberUtils.toBanglaDigits(sections.size)})")
+                                        }
+                                    )
+                                }
+                                items(chapters, key = { it.id }) { ch ->
+                                    val count = sectionCountsByChapter[ch.id] ?: 0
+                                    FilterChip(
+                                        selected = selectedChapterId == ch.id,
+                                        onClick = {
+                                            selectedChapterId = if (selectedChapterId == ch.id) null else ch.id
+                                        },
+                                        label = {
+                                            Text("${ch.chapterNumberBn} (${BanglaNumberUtils.toBanglaDigits(count)})")
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (filteredSections.isEmpty() && selectedChapterId != null) {
+                        item {
+                            val selectedCh = chaptersById[selectedChapterId]
+                            Card(
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = "${selectedCh?.chapterNumberBn ?: ""}: ${selectedCh?.titleBn ?: ""}",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "এই অধ্যায়ের ধারাগুলো বর্তমানে Missing / Verification Pending অবস্থায় আছে। উপরের 'HTML/JSON ইম্পোর্ট' বোতাম দিয়ে সরকারি উৎস (bdlaws.minlaw.gov.bd) থেকে সংরক্ষিত অধ্যায়ভিত্তিক HTML ফাইল লোড করুন।",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -720,5 +833,91 @@ fun LawReaderScreen(
                 }
             }
         }
+    }
+
+    // 8-Point Data Completeness Report Dialog for this Law
+    if (showCompletenessDialog && law != null) {
+        val rep = verificationReport
+        AlertDialog(
+            onDismissRequest = { showCompletenessDialog = false },
+            title = {
+                Text(
+                    text = "Data Completeness Report",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = law.titleBn,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (rep == null) {
+                        Text("এই আইনের যাচাইকরণ প্রতিবেদন এখনও প্রস্তুত হয়নি।")
+                    } else {
+                        Text(
+                            text = "১. পরীক্ষিত ধারা নম্বর: ${BanglaNumberUtils.toBanglaDigits(rep.checkedSectionNumbersCount)}টি\n" +
+                                "২. প্রকৃত ধারা পাওয়া গেছে: ${BanglaNumberUtils.toBanglaDigits(rep.actualSectionsCount)}টি\n" +
+                                "৩. সম্পূর্ণ সংযুক্ত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.completeSectionsCount)}টি\n" +
+                                "৪. আংশিক সংযুক্ত ধারা: ${BanglaNumberUtils.toBanglaDigits(rep.incompleteSectionsCount)}টি\n" +
+                                "৫. অনুপস্থিত (Missing): ${BanglaNumberUtils.toBanglaDigits(rep.missingSectionsCount)}টি\n" +
+                                "৬. রহিত/বিলুপ্ত/বাদ দেওয়া: ${BanglaNumberUtils.toBanglaDigits(rep.repealedSectionsCount)}টি\n" +
+                                "৭. যাচাই অপেক্ষমাণ (Verification Pending): ${BanglaNumberUtils.toBanglaDigits(rep.verificationPendingCount)}টি\n" +
+                                "৮. অসম্পূর্ণ মূল পাঠ/উপধারা: ${rep.incompleteSectionsList.ifBlank { "শনাক্ত হয়নি" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            lineHeight = 20.sp
+                        )
+                        HorizontalDivider()
+                        Text(
+                            text = "অনুপস্থিত ধারাসমূহ (Missing / Verification Pending):",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = rep.missingSectionsList.ifBlank { "কোনো ধারা অনুপস্থিত নেই" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (rep.missingSectionsCount > 0) Color(0xFFC62828) else Color(0xFF2E7D32)
+                        )
+                        if (lawId == 2L) {
+                            HorizontalDivider()
+                            Text(
+                                text = "সরকারি অধ্যায়ভিত্তিক লিংক: https://bdlaws.minlaw.gov.bd/act-11/act-chapter-print-1.html",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable {
+                                    try {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://bdlaws.minlaw.gov.bd/act-11/act-chapter-print-1.html"))
+                                        )
+                                    } catch (_: Exception) { }
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCompletenessDialog = false
+                        importDocumentLauncher.launch(
+                            arrayOf("text/html", "application/json", "application/pdf", "*/*")
+                        )
+                    }
+                ) {
+                    Text("অফিসিয়াল ফাইল ইম্পোর্ট")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompletenessDialog = false }) {
+                    Text("বন্ধ করুন")
+                }
+            }
+        )
     }
 }

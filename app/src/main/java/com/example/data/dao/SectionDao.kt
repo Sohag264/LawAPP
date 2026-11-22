@@ -45,6 +45,9 @@ interface SectionDao {
     @Query("DELETE FROM sections WHERE lawId = :lawId")
     suspend fun deleteSectionsForLaw(lawId: Long)
 
+    @Query("DELETE FROM sections WHERE id IN (:sectionIds)")
+    suspend fun deleteSectionsByIds(sectionIds: List<Long>)
+
     @Query("UPDATE sections SET simplifiedExplanationBn = :explanation WHERE id = :sectionId")
     suspend fun updateSectionExplanation(sectionId: Long, explanation: String)
 
@@ -105,23 +108,25 @@ interface SectionDao {
     @Query("DELETE FROM schedules WHERE lawId = :lawId")
     suspend fun deleteSchedulesForLaw(lawId: Long)
 
-    // Full-text indexed search across sections AND subsections
+    // Full-text indexed search across sections (Bengali + English) AND subsections
     @Query("""
         SELECT DISTINCT s.* FROM sections s
         LEFT JOIN subsections sub ON sub.sectionId = s.id
         WHERE s.sectionNumberBn = :queryBn
-           OR s.sectionNumberEn = :queryEn
+           OR UPPER(s.sectionNumberEn) = UPPER(:queryEn)
            OR s.sectionNumberBn LIKE '%' || :queryBn || '%'
-           OR s.sectionNumberEn LIKE '%' || :queryEn || '%'
+           OR UPPER(s.sectionNumberEn) LIKE '%' || UPPER(:queryEn) || '%'
            OR s.titleBn LIKE '%' || :query || '%'
            OR s.titleEn LIKE '%' || :query || '%'
            OR s.fullContentBn LIKE '%' || :query || '%'
+           OR s.fullContentEn LIKE '%' || :query || '%'
            OR s.simplifiedExplanationBn LIKE '%' || :query || '%'
+           OR s.amendmentNote LIKE '%' || :query || '%'
            OR sub.subsectionText LIKE '%' || :query || '%'
            OR sub.subsectionNumber LIKE '%' || :queryBn || '%'
-           OR sub.subsectionNumber LIKE '%' || :queryEn || '%'
-        ORDER BY s.orderIndex ASC
-        LIMIT 120
+           OR UPPER(sub.subsectionNumber) LIKE '%' || UPPER(:queryEn) || '%'
+        ORDER BY s.orderIndex ASC, s.id ASC
+        LIMIT 150
     """)
     fun searchSections(query: String, queryBn: String, queryEn: String): Flow<List<SectionEntity>>
 
@@ -130,16 +135,18 @@ interface SectionDao {
         LEFT JOIN subsections sub ON sub.sectionId = s.id
         WHERE s.lawId = :lawId AND (
            s.sectionNumberBn = :queryBn
-           OR s.sectionNumberEn = :queryEn
+           OR UPPER(s.sectionNumberEn) = UPPER(:queryEn)
            OR s.sectionNumberBn LIKE '%' || :queryBn || '%'
-           OR s.sectionNumberEn LIKE '%' || :queryEn || '%'
+           OR UPPER(s.sectionNumberEn) LIKE '%' || UPPER(:queryEn) || '%'
            OR s.titleBn LIKE '%' || :query || '%'
            OR s.titleEn LIKE '%' || :query || '%'
            OR s.fullContentBn LIKE '%' || :query || '%'
+           OR s.fullContentEn LIKE '%' || :query || '%'
            OR s.simplifiedExplanationBn LIKE '%' || :query || '%'
+           OR s.amendmentNote LIKE '%' || :query || '%'
            OR sub.subsectionText LIKE '%' || :query || '%'
         )
-        ORDER BY s.orderIndex ASC
+        ORDER BY s.orderIndex ASC, s.id ASC
     """)
     fun searchSectionsInLaw(lawId: Long, query: String, queryBn: String, queryEn: String): Flow<List<SectionEntity>>
 }

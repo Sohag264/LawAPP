@@ -74,8 +74,10 @@ class LawVerificationEngine(
         var completeSections = 0
         var incompleteSections = 0
         var repealedSections = 0
+        var verificationPendingSections = 0
         var verifiedSubsections = 0
         var incompleteSubsections = 0
+        val incompleteSectionNumbers = mutableListOf<String>()
         val parsingErrors = mutableListOf<String>()
 
         // 1. Check duplicates by normalized English section number
@@ -85,40 +87,53 @@ class LawVerificationEngine(
             .keys
             .toList()
 
-        // 2. Inspect each section for completeness, truncation, hash integrity, and subsections
+        // 2. Inspect each section for completeness, truncation, hash integrity, official comparison, and subsections
         val presentBaseNumbers = mutableSetOf<Int>()
+        val letteredSections = mutableSetOf<String>()
         for (sec in sections) {
-            val baseNum = extractBaseNumber(sec.sectionNumberEn)
+            val normNum = BanglaNumberUtils.toEnglishDigits(sec.sectionNumberEn).trim().uppercase()
+            val baseNum = extractBaseNumber(normNum)
             if (baseNum != null) {
                 presentBaseNumbers.add(baseNum)
+                if (normNum != baseNum.toString()) {
+                    letteredSections.add(normNum)
+                }
             }
 
             if (sec.isRepealed || LegalTextParser.isRepealedOrOmitted(sec.titleBn, sec.fullContentBn)) {
                 repealedSections++
             }
 
-            val expectedHash = HashUtils.sha256(sec.fullContentBn)
-            val hashValid = sec.contentHash.isEmpty() || sec.contentHash == expectedHash
-            val truncated = LegalTextParser.isTextLikelyTruncated(sec.fullContentBn, sec.isRepealed)
+            val primaryText = sec.fullContentBn.ifBlank { sec.fullContentEn }
+            val expectedHash = HashUtils.sha256(primaryText)
+            val hashValid = sec.contentHash.isEmpty() ||
+                sec.contentHash == expectedHash ||
+                sec.contentHash == HashUtils.sha256(sec.fullContentEn)
+            val truncated = sec.extractionStatus == ExtractionStatus.PARTIAL ||
+                LegalTextParser.isTextLikelyTruncated(primaryText, sec.isRepealed)
 
             val secSubs = subsectionsBySection[sec.id] ?: emptyList()
-            val parsedNodes = LegalTextParser.parseHierarchy(sec.fullContentBn)
-            val missingSubs = LegalTextParser.findMissingSequentialSubsections(sec.fullContentBn, parsedNodes)
+            val parsedNodes = LegalTextParser.parseHierarchy(primaryText)
+            val missingSubs = LegalTextParser.findMissingSequentialSubsections(primaryText, parsedNodes)
 
+            var sectionSubIncomplete = false
             if (secSubs.isEmpty() && parsedNodes.isNotEmpty()) {
                 incompleteSubsections += parsedNodes.size
+                sectionSubIncomplete = true
                 parsingErrors.add("ধারা ${sec.sectionNumberBn}: উপধারা ডেটাবেজে আলাদা টেবিলে ম্যাপ করা নেই।")
             } else if (missingSubs.isNotEmpty()) {
                 incompleteSubsections += missingSubs.size
+                sectionSubIncomplete = true
                 parsingErrors.add("ধারা ${sec.sectionNumberBn}: অনুপস্থিত উপধারা ${missingSubs.joinToString(", ")}")
             } else {
                 verifiedSubsections += secSubs.size
             }
 
-            if (truncated || !hashValid) {
+            if (truncated || !hashValid || sectionSubIncomplete) {
                 incompleteSections++
+                incompleteSectionNumbers.add(sec.sectionNumberEn.ifEmpty { sec.sectionNumberBn })
                 if (truncated) {
-                    parsingErrors.add("ধারা ${sec.sectionNumberBn}: মূল বক্তব্য অসম্পূর্ণ বা মাঝখানে কাটা পড়েছে।")
+                    parsingErrors.add("ধারা ${sec.sectionNumberBn}: মূল বক্তব্য অসম্পূর্ণ, সংক্ষিপ্ত বা মাঝখানে কাটা পড়েছে।")
                 }
                 if (!hashValid) {
                     parsingErrors.add("ধারা ${sec.sectionNumberBn}: কন্টেন্ট হ্যাশ অসামঞ্জস্যপূর্ণ।")
@@ -126,9 +141,16 @@ class LawVerificationEngine(
             } else {
                 completeSections++
             }
+
+            // Do NOT count a section as verified unless it was actually compared/imported from official source
+            val isVerifiedAgainstOfficial = sec.verificationStatus == VerificationStatus.VERIFIED &&
+                sec.originalHtml.isNotBlank()
+            if (!isVerifiedAgainstOfficial) {
+                verificationPendingSections++
+            }
         }
 
-        // 3. Check missing section numbers from 1..law.totalSections
+        // 3. Check missing section numbers from 1..law.totalSections (plus any lettered sections like 108A, 153A, 505A)
         val expectedCount = law.totalSections.coerceAtLeast(sections.size)
         val missingNumbers = mutableListOf<Int>()
         for (n in 1..expectedCount) {
@@ -136,6 +158,7 @@ class LawVerificationEngine(
                 missingNumbers.add(n)
             }
         }
+        val checkedSectionNumbersCount = law.totalSections + letteredSections.size
 
         // Check trailing section presence
         if (law.totalSections > 0 && law.totalSections !in presentBaseNumbers) {
@@ -148,6 +171,7 @@ class LawVerificationEngine(
             incompleteSections == 0 &&
             duplicateNums.isEmpty() &&
             incompleteSubsections == 0 &&
+            verificationPendingSections == 0 &&
             sections.size >= law.totalSections
 
         val extractionStatus = when {
@@ -157,8 +181,10 @@ class LawVerificationEngine(
         }
 
         val verificationStatus = when {
-            sections.isEmpty() -> VerificationStatus.UNVERIFIED
+            sections.isEmpty() -> VerificationStatus.VERIFICATION_PENDING
             isComplete -> VerificationStatus.VERIFIED
+            missingNumbers.isEmpty() && incompleteSections == 0 && verificationPendingSections > 0 ->
+                VerificationStatus.VERIFICATION_PENDING
             else -> VerificationStatus.INCOMPLETE
         }
 
@@ -173,12 +199,15 @@ class LawVerificationEngine(
         val report = LawVerificationReportEntity(
             lawId = law.id,
             expectedSectionsCount = expectedCount,
+            checkedSectionNumbersCount = checkedSectionNumbersCount.coerceAtLeast(expectedCount),
             actualSectionsCount = sections.size,
             completeSectionsCount = completeSections,
             incompleteSectionsCount = incompleteSections,
             repealedSectionsCount = repealedSections,
+            verificationPendingCount = verificationPendingSections + missingNumbers.size,
             missingSectionsCount = missingNumbers.size,
             missingSectionsList = missingSummary,
+            incompleteSectionsList = incompleteSectionNumbers.distinct().joinToString(", "),
             verifiedSubsectionsCount = verifiedSubsections,
             incompleteSubsectionsCount = incompleteSubsections,
             duplicateSectionsList = duplicateNums.joinToString(", "),

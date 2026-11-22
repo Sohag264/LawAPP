@@ -263,55 +263,84 @@ class LawViewModel(application: Application) : AndroidViewModel(application) {
      * Runs strictly on Dispatchers.IO inside a rollback-safe transaction after backing up user data.
      */
     fun importOfficialDocumentUri(uri: Uri, targetLawId: Long? = null) {
+        importOfficialDocumentUris(listOf(uri), targetLawId)
+    }
+
+    /**
+     * Imports one or multiple official HTML, JSON, or PDF documents chosen by the user from device storage.
+     * Supports selecting multiple chapter print HTML files (e.g. act-chapter-print-1.html..23.html)
+     * in a single atomic transaction on Dispatchers.IO after backing up user data.
+     */
+    fun importOfficialDocumentUris(uris: List<Uri>, targetLawId: Long? = null) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _isImporting.value = true
             val result = withContext(Dispatchers.IO) {
                 try {
                     val resolver = getApplication<Application>().contentResolver
-                    val mimeType = resolver.getType(uri) ?: ""
-                    val fileName = uri.lastPathSegment?.lowercase() ?: ""
+                    if (uris.size == 1) {
+                        val uri = uris.first()
+                        val mimeType = resolver.getType(uri) ?: ""
+                        val fileName = uri.lastPathSegment?.lowercase() ?: ""
 
-                    if (mimeType.contains("pdf") || fileName.endsWith(".pdf")) {
-                        val pdfResult = resolver.openInputStream(uri)?.use { stream ->
-                            PdfTextExtractor.extractTextFromPdfStream(stream)
-                        }
-                        if (pdfResult == null || pdfResult.extractedText.isBlank()) {
-                            RecoveryImportResult(
-                                success = false,
-                                lawId = targetLawId,
-                                backupFilePath = null,
-                                comparison = null,
-                                verificationReport = null,
-                                message = pdfResult?.warningMessage ?: "PDF ফাইল পড়া সম্ভব হয়নি।"
-                            )
-                        } else {
-                            // Convert extracted text into structured sections if detectable
-                            val htmlWrapped = "<html><body><div class='act-details'><p>${pdfResult.extractedText.replace("\n", "</p><p>")}</p></div></body></html>"
-                            val parsed = BdlawsHtmlParser.parseHtml(htmlWrapped, "https://bdlaws.minlaw.gov.bd")
-                            if (parsed.sections.isEmpty()) {
+                        if (mimeType.contains("pdf") || fileName.endsWith(".pdf")) {
+                            val pdfResult = resolver.openInputStream(uri)?.use { stream ->
+                                PdfTextExtractor.extractTextFromPdfStream(stream)
+                            }
+                            if (pdfResult == null || pdfResult.extractedText.isBlank()) {
                                 RecoveryImportResult(
                                     success = false,
                                     lawId = targetLawId,
                                     backupFilePath = null,
                                     comparison = null,
                                     verificationReport = null,
-                                    message = pdfResult.warningMessage ?: "PDF থেকে ধারা বিভাজন করা যায়নি।"
+                                    message = pdfResult?.warningMessage ?: "PDF ফাইল পড়া সম্ভব হয়নি।"
                                 )
                             } else {
-                                recoveryManager.applyParsedPackageTransactionally(
-                                    parsed = parsed,
-                                    targetLawId = targetLawId,
-                                    overrideVerificationStatus = pdfResult.verificationStatus
-                                )
+                                val htmlWrapped = "<html><body><div class='act-details'><p>${pdfResult.extractedText.replace("\n", "</p><p>")}</p></div></body></html>"
+                                val parsed = BdlawsHtmlParser.parseHtml(htmlWrapped, "https://bdlaws.minlaw.gov.bd")
+                                if (parsed.sections.isEmpty()) {
+                                    RecoveryImportResult(
+                                        success = false,
+                                        lawId = targetLawId,
+                                        backupFilePath = null,
+                                        comparison = null,
+                                        verificationReport = null,
+                                        message = pdfResult.warningMessage ?: "PDF থেকে ধারা বিভাজন করা যায়নি।"
+                                    )
+                                } else {
+                                    recoveryManager.applyParsedPackageTransactionally(
+                                        parsed = parsed,
+                                        targetLawId = targetLawId,
+                                        overrideVerificationStatus = pdfResult.verificationStatus
+                                    )
+                                }
+                            }
+                        } else {
+                            val text = resolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                            val trimmed = text.trimStart()
+                            if (trimmed.startsWith("{")) {
+                                recoveryManager.importOfficialJsonPackage(text, targetLawId)
+                            } else {
+                                recoveryManager.importOfficialHtml(text, targetLawId)
                             }
                         }
                     } else {
-                        val text = resolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-                        val trimmed = text.trimStart()
-                        if (trimmed.startsWith("{")) {
-                            recoveryManager.importOfficialJsonPackage(text, targetLawId)
+                        val htmlPages = uris.mapNotNull { uri ->
+                            resolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                        }.filter { it.isNotBlank() && !it.trimStart().startsWith("{") }
+
+                        if (htmlPages.isEmpty()) {
+                            RecoveryImportResult(
+                                success = false,
+                                lawId = targetLawId,
+                                backupFilePath = null,
+                                comparison = null,
+                                verificationReport = null,
+                                message = "একাধিক ফাইল ইম্পোর্টে কোনো বৈধ HTML পৃষ্ঠা পাওয়া যায়নি।"
+                            )
                         } else {
-                            recoveryManager.importOfficialHtml(text, targetLawId)
+                            recoveryManager.importOfficialHtmlPages(htmlPages, targetLawId)
                         }
                     }
                 } catch (e: Exception) {

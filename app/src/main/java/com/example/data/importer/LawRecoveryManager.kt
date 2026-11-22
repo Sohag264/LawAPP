@@ -53,7 +53,7 @@ class LawRecoveryManager(
     }
 
     /**
-     * Imports an official bdlaws.minlaw.gov.bd HTML file (or multi-page HTML list) into the database
+     * Imports an official bdlaws.minlaw.gov.bd HTML file into the database
      * inside a safe atomic transaction, preserving all user notes, bookmarks, and favorites.
      */
     suspend fun importOfficialHtml(
@@ -73,6 +73,46 @@ class LawRecoveryManager(
         }
 
         val parsed = BdlawsHtmlParser.parseHtml(htmlContent, sourceUrl)
+        if (parsed.sections.isEmpty()) {
+            return RecoveryImportResult(
+                success = false,
+                lawId = targetLawId,
+                backupFilePath = null,
+                comparison = null,
+                verificationReport = null,
+                message = "HTML পার্সিংয়ে কোনো ধারা পাওয়া যায়নি। বৈধ bdlaws.minlaw.gov.bd HTML নির্বাচন করুন।"
+            )
+        }
+
+        return applyParsedPackageTransactionally(
+            parsed = parsed,
+            targetLawId = targetLawId,
+            overrideVerificationStatus = null
+        )
+    }
+
+    /**
+     * Imports multiple chapter/print HTML pages (e.g. act-chapter-print-1.html..23.html)
+     * in a single rollback-safe transaction with deduplication and user-data preservation.
+     */
+    suspend fun importOfficialHtmlPages(
+        htmlPages: List<String>,
+        targetLawId: Long? = null,
+        sourceUrl: String = "https://bdlaws.minlaw.gov.bd"
+    ): RecoveryImportResult {
+        val validPages = htmlPages.filter { it.isNotBlank() }
+        if (validPages.isEmpty()) {
+            return RecoveryImportResult(
+                success = false,
+                lawId = targetLawId,
+                backupFilePath = null,
+                comparison = null,
+                verificationReport = null,
+                message = "আমদানিকৃত HTML ফাইলগুলো খালি।"
+            )
+        }
+
+        val parsed = BdlawsHtmlParser.parseMultiplePages(validPages, sourceUrl)
         if (parsed.sections.isEmpty()) {
             return RecoveryImportResult(
                 success = false,
@@ -247,6 +287,10 @@ class LawRecoveryManager(
 
         val comparison = verificationEngine.compareWithOfficialPackage(resolvedLawId, parsed)
 
+        val uniqueParsedSections = parsed.sections.distinctBy {
+            BanglaNumberUtils.toEnglishDigits(it.sectionNumberEn).trim().uppercase()
+        }
+
         return try {
             val report = database.withTransaction {
                 val existingLaw = lawDao.getLawByIdDirect(resolvedLawId)
@@ -256,7 +300,7 @@ class LawRecoveryManager(
                 }
 
                 // 1. Insert or update Law record without wiping expected totalSections if known larger
-                val expectedTotal = maxOf(existingLaw?.totalSections ?: 0, parsed.sections.size)
+                val expectedTotal = maxOf(existingLaw?.totalSections ?: 0, uniqueParsedSections.size)
                 val lawEntity = if (existingLaw != null) {
                     existingLaw.copy(
                         titleBn = parsed.titleBn.ifEmpty { existingLaw.titleBn },
@@ -286,46 +330,98 @@ class LawRecoveryManager(
                 }
                 lawDao.insertLaw(lawEntity)
 
-                // 2. Replace Chapters cleanly using deterministic IDs (lawId * 1000 + orderIndex)
-                val chaptersToInsert = if (parsed.chapters.isNotEmpty()) {
-                    parsed.chapters.map { ch ->
-                        ChapterEntity(
-                            id = resolvedLawId * 1000L + ch.orderIndex,
-                            lawId = resolvedLawId,
-                            chapterNumberBn = ch.chapterNumberBn,
-                            chapterNumberEn = ch.chapterNumberEn,
-                            titleBn = ch.titleBn,
-                            titleEn = ch.titleEn,
-                            orderIndex = ch.orderIndex
-                        )
+                // 2. Merge Chapters cleanly (preserves other pre-existing chapters during chapter-by-chapter imports)
+                val existingChapters = lawDao.getChaptersForLawDirect(resolvedLawId)
+                var nextChapterId = ((existingChapters.maxOfOrNull { it.id } ?: (resolvedLawId * 1000L)) + 1L)
+                    .coerceAtLeast(resolvedLawId * 1000L + 1L)
+                var nextChapterOrder = (existingChapters.maxOfOrNull { it.orderIndex } ?: 0)
+                val chapterIdByOrder = mutableMapOf<Int, Long>()
+
+                if (parsed.chapters.isNotEmpty()) {
+                    val chaptersToInsert = mutableListOf<ChapterEntity>()
+                    for (ch in parsed.chapters) {
+                        val matchedExisting = existingChapters.firstOrNull { ex ->
+                            normalizeChapterKey(ex.chapterNumberEn) == normalizeChapterKey(ch.chapterNumberEn) ||
+                                (ex.titleEn.isNotBlank() && ex.titleEn.equals(ch.titleEn, ignoreCase = true)) ||
+                                (ex.titleBn.isNotBlank() && ex.titleBn.equals(ch.titleBn, ignoreCase = true))
+                        }
+                        if (matchedExisting != null) {
+                            val updated = matchedExisting.copy(
+                                chapterNumberBn = ch.chapterNumberBn.ifBlank { matchedExisting.chapterNumberBn },
+                                chapterNumberEn = ch.chapterNumberEn.ifBlank { matchedExisting.chapterNumberEn },
+                                titleBn = if (matchedExisting.titleBn.isBlank()) ch.titleBn else matchedExisting.titleBn,
+                                titleEn = ch.titleEn.ifBlank { matchedExisting.titleEn }
+                            )
+                            chaptersToInsert.add(updated)
+                            chapterIdByOrder[ch.orderIndex] = matchedExisting.id
+                        } else {
+                            val newId = nextChapterId++
+                            nextChapterOrder++
+                            chaptersToInsert.add(
+                                ChapterEntity(
+                                    id = newId,
+                                    lawId = resolvedLawId,
+                                    chapterNumberBn = ch.chapterNumberBn,
+                                    chapterNumberEn = ch.chapterNumberEn,
+                                    titleBn = ch.titleBn,
+                                    titleEn = ch.titleEn,
+                                    orderIndex = ch.orderIndex.coerceAtLeast(nextChapterOrder)
+                                )
+                            )
+                            chapterIdByOrder[ch.orderIndex] = newId
+                        }
                     }
-                } else {
-                    val existingChapters = lawDao.getChaptersForLawDirect(resolvedLawId)
-                    if (existingChapters.isNotEmpty()) existingChapters else listOf(
-                        ChapterEntity(
-                            id = resolvedLawId * 1000L + 1L,
-                            lawId = resolvedLawId,
-                            chapterNumberBn = "অধ্যায় ১",
-                            chapterNumberEn = "Chapter I",
-                            titleBn = "মূল বিধানাবলি",
-                            titleEn = "Main Provisions",
-                            orderIndex = 1
-                        )
+                    lawDao.insertChapters(chaptersToInsert)
+                } else if (existingChapters.isEmpty()) {
+                    val defaultCh = ChapterEntity(
+                        id = resolvedLawId * 1000L + 1L,
+                        lawId = resolvedLawId,
+                        chapterNumberBn = "অধ্যায় ১",
+                        chapterNumberEn = "Chapter I",
+                        titleBn = "মূল বিধানাবলি",
+                        titleEn = "Main Provisions",
+                        orderIndex = 1
                     )
+                    lawDao.insertChapters(listOf(defaultCh))
+                    chapterIdByOrder[1] = defaultCh.id
+                } else {
+                    existingChapters.forEach { chapterIdByOrder[it.orderIndex] = it.id }
                 }
-                lawDao.insertChapters(chaptersToInsert)
 
-                val chapterIdByOrder = chaptersToInsert.associate { it.orderIndex to it.id }
-                val defaultChapterId = chaptersToInsert.first().id
+                val allChaptersAfterMerge = lawDao.getChaptersForLawDirect(resolvedLawId)
+                val defaultChapterId = allChaptersAfterMerge.firstOrNull()?.id ?: (resolvedLawId * 1000L + 1L)
 
-                // 3. Upsert Sections while preserving userNotes, simplifiedExplanationBn, and existing Section IDs!
+                // 3. Deduplicate existing sections if any stale duplicates existed, and upsert Sections preserving user notes
+                val duplicateIdsToDelete = mutableListOf<Long>()
+                val dedupedExistingByNum = mutableMapOf<String, SectionEntity>()
+                for (sec in existingSections) {
+                    val key = BanglaNumberUtils.toEnglishDigits(sec.sectionNumberEn).trim().uppercase()
+                    val current = dedupedExistingByNum[key]
+                    if (current == null) {
+                        dedupedExistingByNum[key] = sec
+                    } else {
+                        // Keep the record that has userNotes/simplifiedExplanation or longer content
+                        val keepNew = (!sec.userNotes.isNullOrBlank() && current.userNotes.isNullOrBlank()) ||
+                            sec.fullContentBn.length > current.fullContentBn.length
+                        if (keepNew) {
+                            duplicateIdsToDelete.add(current.id)
+                            dedupedExistingByNum[key] = sec
+                        } else {
+                            duplicateIdsToDelete.add(sec.id)
+                        }
+                    }
+                }
+                if (duplicateIdsToDelete.isNotEmpty()) {
+                    sectionDao.deleteSectionsByIds(duplicateIdsToDelete)
+                }
+
                 var nextSyntheticSectionId = (existingSections.maxOfOrNull { it.id } ?: (resolvedLawId * 1000L)) + 1L
                 val sectionsToInsert = mutableListOf<SectionEntity>()
-                val sectionIdForParsed = mutableMapOf<Int, Long>()
+                val sectionIdForParsed = mutableMapOf<String, Long>()
 
-                for (pSec in parsed.sections) {
+                for (pSec in uniqueParsedSections) {
                     val key = BanglaNumberUtils.toEnglishDigits(pSec.sectionNumberEn).trim().uppercase()
-                    val existingSec = existingByNum[key]
+                    val existingSec = dedupedExistingByNum[key]
                     val targetSecId = existingSec?.id ?: (resolvedLawId * 1000L + pSec.sequenceOrder).let { candidate ->
                         if (existingSections.any { it.id == candidate } || sectionIdForParsed.values.contains(candidate)) {
                             nextSyntheticSectionId++
@@ -333,9 +429,37 @@ class LawRecoveryManager(
                             candidate
                         }
                     }
-                    sectionIdForParsed[pSec.sequenceOrder] = targetSecId
+                    sectionIdForParsed[key] = targetSecId
 
                     val chId = chapterIdByOrder[pSec.chapterOrderIndex] ?: existingSec?.chapterId ?: defaultChapterId
+                    val isOfficialSourceVerified = overrideVerificationStatus == null &&
+                        pSec.extractionStatus == ExtractionStatus.COMPLETE &&
+                        (pSec.originalHtml.isNotBlank() || parsed.sourceUrl.contains("bdlaws.minlaw.gov.bd", ignoreCase = true))
+
+                    val secVerificationStatus = when {
+                        overrideVerificationStatus != null -> overrideVerificationStatus
+                        pSec.extractionStatus == ExtractionStatus.PARTIAL -> VerificationStatus.INCOMPLETE
+                        isOfficialSourceVerified -> VerificationStatus.VERIFIED
+                        else -> VerificationStatus.VERIFICATION_PENDING
+                    }
+
+                    val contentBn = when {
+                        !pSec.isEnglishPrimary -> pSec.completeSectionText
+                        existingSec != null && existingSec.fullContentBn.isNotBlank() -> existingSec.fullContentBn
+                        else -> pSec.completeSectionText
+                    }
+                    val contentEn = when {
+                        pSec.isEnglishPrimary -> pSec.completeSectionText
+                        else -> existingSec?.fullContentEn ?: ""
+                    }
+                    val titleBnResolved = when {
+                        !pSec.isEnglishPrimary -> pSec.titleBn
+                        existingSec != null && existingSec.titleBn.isNotBlank() -> existingSec.titleBn
+                        else -> pSec.titleBn
+                    }
+                    val titleEnResolved = pSec.titleEn.ifBlank { existingSec?.titleEn ?: "" }
+                    val legalOrder = BdlawsHtmlParser.computeLegalOrderIndex(pSec.sectionNumberEn, pSec.sequenceOrder)
+
                     sectionsToInsert.add(
                         SectionEntity(
                             id = targetSecId,
@@ -343,22 +467,22 @@ class LawRecoveryManager(
                             chapterId = chId,
                             sectionNumberBn = pSec.sectionNumberBn,
                             sectionNumberEn = pSec.sectionNumberEn,
-                            titleBn = pSec.titleBn,
-                            titleEn = pSec.titleEn,
-                            fullContentBn = pSec.completeSectionText,
-                            fullContentEn = existingSec?.fullContentEn ?: "",
+                            titleBn = titleBnResolved,
+                            titleEn = titleEnResolved,
+                            fullContentBn = contentBn,
+                            fullContentEn = contentEn,
                             simplifiedExplanationBn = existingSec?.simplifiedExplanationBn ?: "",
                             userNotes = existingSec?.userNotes,
                             punishmentSummaryBn = existingSec?.punishmentSummaryBn ?: "",
                             bailableStatus = existingSec?.bailableStatus ?: "",
                             cognizableStatus = existingSec?.cognizableStatus ?: "",
                             trialCourt = existingSec?.trialCourt ?: "",
-                            orderIndex = pSec.sequenceOrder,
-                            originalHtml = pSec.originalHtml,
+                            orderIndex = legalOrder,
+                            originalHtml = pSec.originalHtml.ifBlank { existingSec?.originalHtml ?: "" },
                             contentHash = pSec.contentHash,
-                            sourceUrl = parsed.sourceUrl,
+                            sourceUrl = pSec.sectionSourceUrl.ifBlank { parsed.sourceUrl },
                             extractionStatus = pSec.extractionStatus,
-                            verificationStatus = overrideVerificationStatus ?: VerificationStatus.UNVERIFIED,
+                            verificationStatus = secVerificationStatus,
                             isRepealed = pSec.isRepealed,
                             isAmended = pSec.isAmended,
                             amendmentNote = existingSec?.amendmentNote ?: ""
@@ -368,8 +492,9 @@ class LawRecoveryManager(
                 sectionDao.insertSections(sectionsToInsert)
 
                 // 4. Rebuild hierarchical Subsections & Footnotes cleanly for each imported section
-                for (pSec in parsed.sections) {
-                    val secId = sectionIdForParsed[pSec.sequenceOrder] ?: continue
+                for (pSec in uniqueParsedSections) {
+                    val key = BanglaNumberUtils.toEnglishDigits(pSec.sectionNumberEn).trim().uppercase()
+                    val secId = sectionIdForParsed[key] ?: continue
                     sectionDao.deleteSubsectionsForSection(secId)
                     sectionDao.deleteFootnotesForSection(secId)
 
@@ -389,6 +514,7 @@ class LawRecoveryManager(
                         tempToRealId[node.tempId] = insertedId
                     }
 
+                // 4b. Footnotes
                     if (pSec.footnotes.isNotEmpty()) {
                         sectionDao.insertFootnotes(
                             pSec.footnotes.map { fn ->
@@ -431,7 +557,7 @@ class LawRecoveryManager(
                 backupFilePath = backupFile.absolutePath,
                 comparison = comparison,
                 verificationReport = report,
-                message = "সফলভাবে ${parsed.sections.size}টি ধারা ট্রানজেকশন-সুরক্ষিতভাবে ইম্পোর্ট ও যাচাই করা হয়েছে।"
+                message = "সফলভাবে ${uniqueParsedSections.size}টি ধারা ট্রানজেকশন-সুরক্ষিতভাবে ইম্পোর্ট ও যাচাই করা হয়েছে।"
             )
         } catch (e: Exception) {
             RecoveryImportResult(
@@ -443,6 +569,12 @@ class LawRecoveryManager(
                 message = "ইম্পোর্ট ব্যর্থ হয়েছে (পূর্বের ডেটাবেজ অক্ষত আছে): ${e.localizedMessage}"
             )
         }
+    }
+
+    private fun normalizeChapterKey(raw: String): String {
+        return BanglaNumberUtils.toEnglishDigits(raw)
+            .lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
     }
 
     private suspend fun findMatchingLawId(parsed: ParsedLawPackage): Long? {

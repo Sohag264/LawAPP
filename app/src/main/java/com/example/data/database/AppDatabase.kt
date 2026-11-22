@@ -49,7 +49,7 @@ import kotlinx.coroutines.launch
         ReadingHistoryEntity::class,
         PersonalNoteEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -179,6 +179,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE verification_reports ADD COLUMN checkedSectionNumbersCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE verification_reports ADD COLUMN verificationPendingCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE verification_reports ADD COLUMN incompleteSectionsList TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -186,7 +194,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "bangladesh_laws.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .addCallback(DatabaseCallback(context))
                     .build()
                 INSTANCE = instance
@@ -212,9 +220,11 @@ abstract class AppDatabase : RoomDatabase() {
                     val lawDao = database.lawDao()
                     val sectionDao = database.sectionDao()
                     val verificationDao = database.verificationDao()
+                    val schemaMeta = verificationDao.getMetadata("schema_version")?.value
                     if (lawDao.getLawByIdDirect(1) == null ||
                         sectionDao.getSubsectionCountDirect() == 0 ||
-                        verificationDao.getAllVerificationReportsDirect().isEmpty()
+                        verificationDao.getAllVerificationReportsDirect().isEmpty() ||
+                        schemaMeta != "3"
                     ) {
                         populateAndVerifyDatabase(database)
                     }
@@ -236,7 +246,7 @@ abstract class AppDatabase : RoomDatabase() {
                         sectionDao.insertSections(sections)
                         sectionDao.insertSubsections(LawPreloader.extractSubsectionsForSections(sections))
                     } else {
-                        // Ensure chapters 33..38 & subsections exist after v1->v2 migration without overwriting user notes
+                        // Ensure all 54 initial chapters (including all 25 Penal Code chapters) & subsections exist without overwriting user notes or imported sections
                         lawDao.insertChapters(LawPreloader.getInitialChapters())
                         val existingSections = LawPreloader.getInitialSections()
                         val existingById = existingSections.associateBy { it.id }
@@ -249,7 +259,8 @@ abstract class AppDatabase : RoomDatabase() {
                                     dbSec.copy(
                                         chapterId = template.chapterId,
                                         contentHash = template.contentHash,
-                                        sourceUrl = template.sourceUrl
+                                        sourceUrl = template.sourceUrl,
+                                        extractionStatus = template.extractionStatus
                                     )
                                 } else dbSec
                             }
@@ -261,7 +272,7 @@ abstract class AppDatabase : RoomDatabase() {
                     verificationDao.setMetadata(
                         DatabaseMetadataEntity(
                             key = "schema_version",
-                            value = "2",
+                            value = "3",
                             updatedAt = System.currentTimeMillis()
                         )
                     )

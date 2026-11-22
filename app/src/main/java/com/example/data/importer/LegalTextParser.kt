@@ -25,10 +25,11 @@ object LegalTextParser {
     private val NUMBERED_ITEM_START = Regex("^\\s*([০-৯]+|\\d+)\\.\\s+(.+)$")
     private val CLAUSE_START = Regex("^\\s*\\(([ক-হ]|[a-z])\\)\\s*(.*)$")
     private val SUBCLAUSE_START = Regex("^\\s*\\(([অ-ঔ]|i{1,3}|iv|v|vi{0,3}|ix|x)\\)\\s*(.*)$", RegexOption.IGNORE_CASE)
-    private val PROVISO_START = Regex("^\\s*(তবে শর্ত থাকে যে|আরও শর্ত থাকে যে|শর্ত থাকে যে|Provided that|Provided further that)[:\\s,]*(.*)$", RegexOption.IGNORE_CASE)
-    private val EXPLANATION_START = Regex("^\\s*(ব্যাখ্যা(?:\\s*[০-৯\\d]*)?|Explanation(?:\\s*\\d*)?)\\s*[:\\-–—.]\\s*(.*)$", RegexOption.IGNORE_CASE)
-    private val EXCEPTION_START = Regex("^\\s*(ব্যতিক্রম(?:সমূহ)?|Exception(?:s)?)\\s*[:\\-–—.]\\s*(.*)$", RegexOption.IGNORE_CASE)
-    private val ILLUSTRATION_START = Regex("^\\s*(দৃষ্টান্ত(?:সমূহ)?|Illustration(?:s)?)\\s*[:\\-–—.]\\s*(.*)$", RegexOption.IGNORE_CASE)
+    private val ROMAN_SUBCLAUSE_EXACT = Regex("^\\s*\\((i{1,3}|iv|vi{1,3}|ix|x|অ-ঔ)\\)\\s*(.*)$", RegexOption.IGNORE_CASE)
+    private val PROVISO_START = Regex("^\\s*(তবে শর্ত থাকে যে|আরও শর্ত থাকে যে|শর্ত থাকে যে|Provided also that|Provided further that|Provided that)[.:\\-–—,\\s]*(.*)$", RegexOption.IGNORE_CASE)
+    private val EXPLANATION_START = Regex("^\\s*(ব্যাখ্যা(?:\\s*[০-৯\\d]*)?|Explanation(?:\\s*\\d*)?)\\s*(?:[.:\\-–—]+\\s*|(?=$))(.*)$", RegexOption.IGNORE_CASE)
+    private val EXCEPTION_START = Regex("^\\s*(?:(?:First|Second|Third|Fourth|Fifth)\\s+)?(ব্যতিক্রম(?:সমূহ)?(?:\\s*[০-৯\\d]*)?|Exception(?:s)?(?:\\s*\\d*)?)\\s*(?:[.:\\-–—]+\\s*|(?=$))(.*)$", RegexOption.IGNORE_CASE)
+    private val ILLUSTRATION_START = Regex("^\\s*(দৃষ্টান্ত(?:সমূহ)?|উদাহরণ(?:সমূহ)?|Illustration(?:s)?)\\s*(?:[.:\\-–—]+\\s*|(?=$))(.*)$", RegexOption.IGNORE_CASE)
 
     fun isRepealedOrOmitted(title: String, content: String): Boolean {
         val combined = "$title $content"
@@ -59,11 +60,11 @@ object LegalTextParser {
         val normalizedText = fullSectionText
             .replace("\r\n", "\n")
             .replace(
-                Regex("(?<=[।.;:])[ \\t]+(?=\\((?:[০-৯]+|\\d+|[ক-হ]|[a-z])\\)\\s)"),
+                Regex("(?<=[।.;:])[ \\t]+(?=\\((?:[০-৯]+|\\d+|[ক-হ]|[a-z]|i{1,3}|iv|vi{1,3}|ix|x)\\)\\s)", RegexOption.IGNORE_CASE),
                 "\n"
             )
             .replace(
-                Regex("(?<=[।.;:])[ \\t]+(?=(?:তবে শর্ত থাকে যে|আরও শর্ত থাকে যে|Provided that|Provided further that))", RegexOption.IGNORE_CASE),
+                Regex("(?<=[।.;:])[ \\t]+(?=(?:তবে শর্ত থাকে যে|আরও শর্ত থাকে যে|Provided also that|Provided further that|Provided that|Explanation(?:\\s*\\d*)?[.:\\-–—]|Exception(?:s)?(?:\\s*\\d*)?[.:\\-–—]|Illustrations?[.:\\-–—]?))", RegexOption.IGNORE_CASE),
                 "\n"
             )
         val lines = normalizedText.split("\n")
@@ -98,8 +99,12 @@ object LegalTextParser {
 
             val subMatch = SUBSECTION_START.matchEntire(line)
             val numItemMatch = if (subMatch == null) NUMBERED_ITEM_START.matchEntire(line) else null
-            val clauseMatch = if (subMatch == null && numItemMatch == null) CLAUSE_START.matchEntire(line) else null
-            val subclauseMatch = if (subMatch == null && numItemMatch == null && clauseMatch == null) SUBCLAUSE_START.matchEntire(line) else null
+            val subclauseMatch = if (subMatch == null && numItemMatch == null && currentClauseId != null) {
+                SUBCLAUSE_START.matchEntire(line)
+            } else null
+            val clauseMatch = if (subMatch == null && numItemMatch == null && subclauseMatch == null) {
+                CLAUSE_START.matchEntire(line)
+            } else null
             val provisoMatch = PROVISO_START.matchEntire(line)
             val explanationMatch = EXPLANATION_START.matchEntire(line)
             val exceptionMatch = EXCEPTION_START.matchEntire(line)
@@ -204,13 +209,14 @@ object LegalTextParser {
     }
 
     /**
-     * Detects whether section text appears truncated mid-sentence or has unbalanced delimiters.
+     * Detects whether section text appears truncated mid-sentence, abbreviated with "ইত্যাদি।", or has unbalanced delimiters.
      */
     fun isTextLikelyTruncated(text: String, isRepealed: Boolean): Boolean {
         if (isRepealed) return false
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return true
         if (trimmed.endsWith("...") || trimmed.endsWith("…")) return true
+        if (trimmed.endsWith("ইত্যাদি।") || trimmed.endsWith("ইত্যাদি") || trimmed.contains("ব্যতিক্রমসমূহ:")) return true
 
         // Check unbalanced parentheses
         val openParens = trimmed.count { it == '(' }

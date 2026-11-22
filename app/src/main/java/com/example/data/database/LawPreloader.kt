@@ -266,16 +266,32 @@ object LawPreloader {
             ChapterEntity(4, 1, "তৃতীয় ভাগ", "Part III", "মৌলিক অধিকার", "Fundamental Rights", 4),
             ChapterEntity(5, 1, "ষষ্ঠ ভাগ", "Part VI", "বিচার বিভাগ ও সুপ্রিম কোর্ট", "The Judiciary", 5),
 
-            // Penal Code Chapters
-            ChapterEntity(6, 2, "অধ্যায় ১", "Chapter I", "প্রারম্ভিক", "Introduction", 1),
-            ChapterEntity(7, 2, "অধ্যায় ২", "Chapter II", "সাধারণ ব্যাখ্যা", "General Explanations", 2),
-            ChapterEntity(8, 2, "অধ্যায় ৩", "Chapter III", "দণ্ড সম্পর্কিত বিধান", "Of Punishments", 3),
-            ChapterEntity(9, 2, "অধ্যায় ৪", "Chapter IV", "সাধারণ ব্যতিক্রম ও আত্মরক্ষা", "General Exceptions & Private Defence", 4),
-            ChapterEntity(10, 2, "অধ্যায় ৮", "Chapter VIII", "জনশান্তি বিনষ্টকারী অপরাধ", "Of Offences Against the Public Tranquillity", 5),
-            ChapterEntity(11, 2, "অধ্যায় ১৬", "Chapter XVI", "মানবদেহ বিরোধী অপরাধ (খুন, আঘাত)", "Of Offences Affecting the Human Body", 6),
-            ChapterEntity(12, 2, "অধ্যায় ১৭", "Chapter XVII", "সম্পত্তি সংক্রান্ত অপরাধ (চুরি, প্রতারণা)", "Of Offences Against Property", 7),
-            ChapterEntity(13, 2, "অধ্যায় ১৮", "Chapter XVIII", "দলিলপত্র ও জালিয়াতি সংক্রান্ত অপরাধ", "Of Offences Relating to Documents", 8),
-            ChapterEntity(14, 2, "অধ্যায় ২১", "Chapter XXI", "মানহানি সংক্রান্ত অপরাধ", "Of Defamation", 9),
+            // Penal Code Chapters (All 25 official chapters from bdlaws.minlaw.gov.bd/act-11.html; IDs 6..14 preserved for existing sections)
+            ChapterEntity(6, 2, "অধ্যায় ১", "Chapter I", "প্রারম্ভিক (ধারা ১–৫)", "Introduction (Sec. 1–5)", 1),
+            ChapterEntity(7, 2, "অধ্যায় ২", "Chapter II", "সাধারণ ব্যাখ্যা (ধারা ৬–৫২ক)", "General Explanations (Sec. 6–52A)", 2),
+            ChapterEntity(8, 2, "অধ্যায় ৩", "Chapter III", "দণ্ড সম্পর্কিত বিধান (ধারা ৫৩–৭৫)", "Of Punishments (Sec. 53–75)", 3),
+            ChapterEntity(9, 2, "অধ্যায় ৪", "Chapter IV", "সাধারণ ব্যতিক্রম ও আত্মরক্ষা (ধারা ৭৬–১০৬)", "General Exceptions (Sec. 76–106)", 4),
+            ChapterEntity(39, 2, "অধ্যায় ৫", "Chapter V", "সহায়তা বা প্ররোচনা (ধারা ১০৭–১২০)", "Of Abetment (Sec. 107–120)", 5),
+            ChapterEntity(40, 2, "অধ্যায় ৫ক", "Chapter VA", "অপরাধমূলক ষড়যন্ত্র (ধারা ১২০ক–১২০খ)", "Criminal Conspiracy (Sec. 120A–120B)", 6),
+            ChapterEntity(41, 2, "অধ্যায় ৬", "Chapter VI", "রাষ্ট্রবিরোধী অপরাধ (ধারা ১২১–১৩০)", "Of Offences Against the State (Sec. 121–130)", 7),
+            ChapterEntity(42, 2, "অধ্যায় ৭", "Chapter VII", "সেনা, নৌ ও বিমান বাহিনী সংক্রান্ত অপরাধ (ধারা ১৩১–১৪০)", "Of Offences Relating to the Army, Navy and Air Force (Sec. 131–140)", 8),
+            ChapterEntity(10, 2, "অধ্যায় ৮", "Chapter VIII", "জনশান্তি বিনষ্টকারী অপরাধ (ধারা ১৪১–১৬০)", "Of Offences Against the Public Tranquillity (Sec. 141–160)", 9),
+            ChapterEntity(43, 2, "অধ্যায় ৯", "Chapter IX", "সরকারি কর্মচারী সংক্রান্ত অপরাধ (ধারা ১৬১–১৭১)", "Of Offences by or Relating to Public Servants (Sec. 161–171)", 10),
+            ChapterEntity(44, 2, "অধ্যায় ৯ক", "Chapter IXA", "নির্বাচন সংক্রান্ত অপরাধ (ধারা ১৭১ক–১৭১ঝ)", "Of Offences Relating to Elections (Sec. 171A–171I)", 11),
+            ChapterEntity(45, 2, "অধ্যায় ১০", "Chapter X", "সরকারি কর্মচারীর আইনানুগ কর্তৃত্ব অবমাননা (ধারা ১৭২–১৯০)", "Contempts of the Lawful Authority of Public Servants (Sec. 172–190)", 12),
+            ChapterEntity(46, 2, "অধ্যায় ১১", "Chapter XI", "মিথ্যা সাক্ষ্য ও জনন্যায়বিচার বিরোধী অপরাধ (ধারা ১৯১–২২৯ক)", "False Evidence and Offences Against Public Justice (Sec. 191–229A)", 13),
+            ChapterEntity(47, 2, "অধ্যায় ১২", "Chapter XII", "মুদ্রা ও সরকারি স্ট্যাম্প সংক্রান্ত অপরাধ (ধারা ২৩০–২৬৩ক)", "Of Offences Relating to Coin and Government Stamps (Sec. 230–263A)", 14),
+            ChapterEntity(48, 2, "অধ্যায় ১৩", "Chapter XIII", "ওজন ও পরিমাপ সংক্রান্ত অপরাধ (ধারা ২৬৪–২৬৭)", "Of Offences Relating to Weights and Measures (Sec. 264–267)", 15),
+            ChapterEntity(49, 2, "অধ্যায় ১৪", "Chapter XIV", "জনস্বাস্থ্য, নিরাপত্তা, শালীনতা ও নৈতিকতা বিরোধী অপরাধ (ধারা ২৬৮–২৯৪ক)", "Of Offences Affecting the Public Health, Safety, Convenience, Decency and Morals (Sec. 268–294A)", 16),
+            ChapterEntity(50, 2, "অধ্যায় ১৫", "Chapter XV", "ধর্ম সংক্রান্ত অপরাধ (ধারা ২৯৫–২৯৮)", "Of Offences Relating to Religion (Sec. 295–298)", 17),
+            ChapterEntity(11, 2, "অধ্যায় ১৬", "Chapter XVI", "মানবদেহ বিরোধী অপরাধ (ধারা ২৯৯–৩৭৭)", "Of Offences Affecting the Human Body (Sec. 299–377)", 18),
+            ChapterEntity(12, 2, "অধ্যায় ১৭", "Chapter XVII", "সম্পত্তি সংক্রান্ত অপরাধ (ধারা ৩৭৮–৪৬২)", "Of Offences Against Property (Sec. 378–462)", 19),
+            ChapterEntity(13, 2, "অধ্যায় ১৮", "Chapter XVIII", "দলিলপত্র ও সম্পত্তি চিহ্ন সংক্রান্ত অপরাধ (ধারা ৪৬৩–৪৮৯ঞ)", "Of Offences Relating to Documents and to Trade or Property Marks (Sec. 463–489K)", 20),
+            ChapterEntity(51, 2, "অধ্যায় ১৯", "Chapter XIX", "সেবা চুক্তির অপরাধমূলক ভঙ্গ (ধারা ৪৯০–৪৯২)", "Criminal Breach of Contracts of Service (Sec. 490–492)", 21),
+            ChapterEntity(52, 2, "অধ্যায় ২০", "Chapter XX", "বিবাহ সংক্রান্ত অপরাধ (ধারা ৪৯৩–৪৯৮)", "Of Offences Relating to Marriage (Sec. 493–498)", 22),
+            ChapterEntity(14, 2, "অধ্যায় ২১", "Chapter XXI", "মানহানি সংক্রান্ত অপরাধ (ধারা ৪৯৯–৫০২)", "Of Defamation (Sec. 499–502)", 23),
+            ChapterEntity(53, 2, "অধ্যায় ২২", "Chapter XXII", "অপরাধমূলক ভীতিপ্রদর্শন, অপমান ও বিরক্তি (ধারা ৫০৩–৫১০)", "Criminal Intimidation, Insult and Annoyance (Sec. 503–510)", 24),
+            ChapterEntity(54, 2, "অধ্যায় ২৩", "Chapter XXIII", "অপরাধ সংঘটনের প্রচেষ্টা (ধারা ৫১১)", "Attempts to Commit Offences (Sec. 511)", 25),
 
             // CrPC Chapters
             ChapterEntity(15, 3, "অধ্যায় ৫", "Chapter V", "গ্রেপ্তার, পলায়ন ও পুনঃগ্রেপ্তার", "Of Arrest, Escape and Retaking", 1),
@@ -1229,12 +1245,14 @@ object LawPreloader {
         )
 
         return rawSections.map { sec ->
+            val repealed = LegalTextParser.isRepealedOrOmitted(sec.titleBn, sec.fullContentBn)
+            val truncatedOrAbbreviated = LegalTextParser.isTextLikelyTruncated(sec.fullContentBn, repealed)
             sec.copy(
                 contentHash = HashUtils.sha256(sec.fullContentBn),
                 sourceUrl = lawSourceMap[sec.lawId] ?: "https://bdlaws.minlaw.gov.bd",
-                extractionStatus = ExtractionStatus.COMPLETE,
-                verificationStatus = VerificationStatus.UNVERIFIED,
-                isRepealed = LegalTextParser.isRepealedOrOmitted(sec.titleBn, sec.fullContentBn),
+                extractionStatus = if (truncatedOrAbbreviated) ExtractionStatus.PARTIAL else ExtractionStatus.COMPLETE,
+                verificationStatus = VerificationStatus.VERIFICATION_PENDING,
+                isRepealed = repealed,
                 isAmended = LegalTextParser.isAmended(sec.titleBn, sec.fullContentBn)
             )
         }
