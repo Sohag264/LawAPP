@@ -1,0 +1,8 @@
+{
+  "name": "Bangladesh Laws",
+  "description": "Offline legal library for Bangladesh laws, penal code, constitution, CrPC, CPC, search, bookmarks, and notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

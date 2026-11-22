@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Bangladesh Laws</string>
+    <string name="app_title_bn">বাংলাদেশের আইন</string>
+    <string name="search_hint">আইনের নাম, ধারা, বা বিষয় দিয়ে খুঁজুন…</string>
+</resources>
